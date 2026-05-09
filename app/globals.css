@@ -1,0 +1,164 @@
+@import "tailwindcss";
+
+:root {
+  --background: #fafafa;
+  --foreground: #18181b;
+  --accent: #3b82f6;
+  --accent-soft: #dbeafe;
+  --selection: #fde68a;
+  --selection-soft: #fef3c7;
+  --muted: #71717a;
+  --border: #e4e4e7;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-selection: var(--selection);
+  --color-selection-soft: var(--selection-soft);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #09090b;
+    --foreground: #fafafa;
+    --accent: #60a5fa;
+    --accent-soft: #1e3a8a;
+    --selection: #f59e0b;
+    --selection-soft: #422006;
+    --muted: #a1a1aa;
+    --border: #27272a;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+/* Milkdown / ProseMirror surface */
+.voicemd-editor {
+  outline: none;
+}
+.voicemd-editor .ProseMirror {
+  outline: none;
+  min-height: 60vh;
+}
+.voicemd-editor .ProseMirror p {
+  margin: 0 0 0.85rem;
+  line-height: 1.6;
+}
+.voicemd-editor .ProseMirror h1 {
+  font-size: 1.875rem;
+  font-weight: 600;
+  margin: 0 0 1rem;
+  letter-spacing: -0.02em;
+}
+.voicemd-editor .ProseMirror h2 {
+  font-size: 1.375rem;
+  font-weight: 600;
+  margin: 1.5rem 0 0.75rem;
+  letter-spacing: -0.015em;
+}
+.voicemd-editor .ProseMirror h3 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin: 1.25rem 0 0.5rem;
+}
+.voicemd-editor .ProseMirror ul,
+.voicemd-editor .ProseMirror ol {
+  padding-left: 1.5rem;
+  margin: 0 0 0.85rem;
+}
+.voicemd-editor .ProseMirror ul {
+  list-style: disc;
+}
+.voicemd-editor .ProseMirror ol {
+  list-style: decimal;
+}
+.voicemd-editor .ProseMirror li {
+  margin: 0.15rem 0;
+}
+.voicemd-editor .ProseMirror blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 1rem;
+  margin: 0 0 0.85rem;
+  color: var(--muted);
+}
+.voicemd-editor .ProseMirror code {
+  background: var(--accent-soft);
+  border-radius: 4px;
+  padding: 0.1rem 0.3rem;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.92em;
+}
+.voicemd-editor .ProseMirror pre {
+  background: var(--accent-soft);
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+  overflow-x: auto;
+  margin: 0 0 0.85rem;
+}
+.voicemd-editor .ProseMirror pre code {
+  background: transparent;
+  padding: 0;
+}
+.voicemd-editor .ProseMirror table {
+  border-collapse: collapse;
+  margin: 0 0 0.85rem;
+}
+.voicemd-editor .ProseMirror th,
+.voicemd-editor .ProseMirror td {
+  border: 1px solid var(--border);
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+}
+
+/* About-to-edit highlight (added during a transformSelection turn). */
+.voicemd-pending-highlight {
+  background: var(--selection-soft);
+  border-bottom: 2px solid var(--selection);
+  border-radius: 2px;
+  transition: background 0.18s ease, border-bottom-color 0.18s ease;
+}
+
+/* Just-edited highlight (fades after Stage 1 lands). */
+.voicemd-fresh-highlight {
+  background: var(--accent-soft);
+  border-radius: 2px;
+  animation: voicemd-fresh-fade 1.6s ease-out forwards;
+}
+@keyframes voicemd-fresh-fade {
+  0% {
+    background: var(--accent-soft);
+  }
+  100% {
+    background: transparent;
+  }
+}
+
+/* Talk-zone waveform bars */
+@keyframes voicemd-wave {
+  0%, 100% { transform: scaleY(0.4); }
+  50%      { transform: scaleY(1); }
+}
+.animate-wave {
+  animation: voicemd-wave 0.6s ease-in-out infinite;
+  transform-origin: center;
+}
+
+/* Selection-zone fade-in */
+@keyframes voicemd-zone-appear {
+  from { opacity: 0; transform: scale(0.85); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.animate-zone-appear {
+  animation: voicemd-zone-appear 0.18s ease-out backwards;
+}
