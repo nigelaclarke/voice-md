@@ -16,6 +16,7 @@ import {
   createVoiceControlController,
   GhostCursorOverlay,
   useGhostCursor,
+  type VoiceControlError,
 } from "realtime-voice-component";
 import "realtime-voice-component/styles.css";
 import {
@@ -28,6 +29,7 @@ import {
 } from "react";
 
 import type { EditorHandle, SelectionInfo } from "@/components/editor";
+import { ErrorBanner } from "@/components/error-banner";
 import { StatusPill } from "@/components/status-pill";
 import { TalkZone } from "@/components/talk-zone";
 import { TranscriptChip } from "@/components/transcript-chip";
@@ -195,6 +197,8 @@ export function Voice({ editorRef }: VoiceProps) {
 
   const tools = useMemo(() => buildTools(adapter), [adapter]);
 
+  const [error, setError] = useState<VoiceControlError | null>(null);
+
   const [controller] = useState(() =>
     createVoiceControlController({
       auth: { sessionEndpoint: "/api/realtime-session" },
@@ -205,6 +209,7 @@ export function Voice({ editorRef }: VoiceProps) {
       tools,
       // We auto-connect on mount.
       autoConnect: true,
+      onError: (err) => setError(err),
     }),
   );
 
@@ -413,6 +418,16 @@ export function Voice({ editorRef }: VoiceProps) {
         anchorRect={activeZoneRect}
       />
       <StatusPill status={mapStatus(zone.status, voiceActivity)} />
+      <ErrorBanner
+        error={error}
+        onRetry={() => {
+          setError(null);
+          void controller.connect().catch((err) => {
+            // eslint-disable-next-line no-console
+            console.error("[voice] reconnect failed:", err);
+          });
+        }}
+      />
       <Surface
         editorRef={editorRef}
         onAnyInteraction={() => uiStore.bumpIdle()}

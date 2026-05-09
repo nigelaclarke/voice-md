@@ -13,6 +13,7 @@
     "@a2ui/web_core": "^0.9.2",
     "@milkdown/core": "^7.20.0",
     "@milkdown/ctx": "^7.20.0",
+    "@milkdown/plugin-history": "^7.20.0",
     "@milkdown/preset-commonmark": "^7.20.0",
     "@milkdown/prose": "^7.20.0",
     "@milkdown/react": "^7.20.0",

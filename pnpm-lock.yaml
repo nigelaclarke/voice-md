@@ -20,6 +20,9 @@ importers:
       '@milkdown/ctx':
         specifier: ^7.20.0
         version: 7.20.0
+      '@milkdown/plugin-history':
+        specifier: ^7.20.0
+        version: 7.20.0
       '@milkdown/preset-commonmark':
         specifier: ^7.20.0
         version: 7.20.0

@@ -11,6 +11,7 @@ import {
   rootCtx,
   serializerCtx,
 } from "@milkdown/core";
+import { history } from "@milkdown/plugin-history";
 import { Milkdown, MilkdownProvider, useEditor } from "@milkdown/react";
 import { commonmark } from "@milkdown/preset-commonmark";
 import { Slice } from "@milkdown/prose/model";
@@ -163,7 +164,8 @@ function MilkdownInner({ onReady }: InnerProps) {
         ctx.set(rootCtx, root);
         ctx.set(defaultValueCtx, INITIAL_DOC);
       })
-      .use(commonmark),
+      .use(commonmark)
+      .use(history),
   );
 
   // Register the decoration plugin once the editor is built.
