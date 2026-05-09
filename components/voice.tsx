@@ -29,6 +29,7 @@ import {
 } from "react";
 
 import type { EditorHandle, SelectionInfo } from "@/components/editor";
+import { DebugLog } from "@/components/debug-log";
 import { ErrorBanner } from "@/components/error-banner";
 import { StatusPill } from "@/components/status-pill";
 import { TalkZone } from "@/components/talk-zone";
@@ -139,16 +140,34 @@ export function Voice({ editorRef }: VoiceProps) {
   const adapter = useMemo(
     () => ({
       applyTransform: (args: TransformSelectionArgs) => {
+        console.info("[voice:adapter] applyTransform", {
+          intent: args.intent,
+          primaryLength: args.primary.length,
+          range: pendingRangeRef.current
+            ? {
+                from: pendingRangeRef.current.from,
+                to: pendingRangeRef.current.to,
+              }
+            : null,
+        });
         const handle = editorRef.current;
-        if (!handle) return;
+        if (!handle) {
+          console.warn("[voice:adapter] applyTransform: no editor handle");
+          return;
+        }
         const range = pendingRangeRef.current;
         const original = range?.text ?? "";
         const anchorRect = pendingRectRef.current;
         // Apply the replacement against the snapshotted range.
-        handle.replaceSelection(
-          args.primary,
-          range ? { from: range.from, to: range.to } : undefined,
-        );
+        try {
+          handle.replaceSelection(
+            args.primary,
+            range ? { from: range.from, to: range.to } : undefined,
+          );
+        } catch (err) {
+          console.error("[voice:adapter] replaceSelection threw", err);
+          throw err;
+        }
         // Compute the post-edit range so a follow-up Stage 2 dial can replace it.
         const postRange = computePostEditRange(range, args.primary);
         const prevSurface = uiStore.snapshot.activeSurface;
@@ -176,9 +195,15 @@ export function Voice({ editorRef }: VoiceProps) {
         }
       },
       applyInsert: (args: InsertAtCursorArgs) => {
+        console.info("[voice:adapter] applyInsert", {
+          textLength: args.text.length,
+        });
         editorRef.current?.insertAtCursor(args.text);
       },
       showSurface: (spec: SurfaceSpec) => {
+        console.info("[voice:adapter] showSurface", {
+          type: spec.type,
+        });
         const last = uiStore.snapshot.lastTransform;
         uiStore.showSurface({
           spec,
@@ -197,26 +222,149 @@ export function Voice({ editorRef }: VoiceProps) {
 
   const [controller] = useState(() =>
     createVoiceControlController({
-      auth: { sessionEndpoint: "/api/realtime-session" },
+      // Use the ephemeral client-secret flow: the browser negotiates WebRTC
+      // directly with OpenAI using a short-lived secret minted by our
+      // /api/realtime-token route. This bypasses the multipart proxy entirely
+      // and is the simpler, faster, easier-to-debug path.
+      auth: {
+        getClientSecret: async () => {
+          const r = await fetch("/api/realtime-token", { method: "POST" });
+          if (!r.ok) {
+            const detail = await r.text().catch(() => "");
+            throw new Error(
+              `Failed to mint realtime client secret: ${r.status} ${detail.slice(0, 200)}`,
+            );
+          }
+          const payload = await r.json();
+          // Per the realtime-voice-component docs the value lives on
+          // payload.value, payload.client_secret.value, or payload.client_secret.
+          const secret =
+            payload.value ??
+            payload.client_secret?.value ??
+            payload.client_secret;
+          if (!secret) {
+            throw new Error(
+              `Mint route returned no client secret: ${JSON.stringify(payload).slice(0, 200)}`,
+            );
+          }
+          return secret as string;
+        },
+      },
       instructions: SYSTEM_PROMPT,
       model: "gpt-realtime",
       outputMode: "tool-only",
       activationMode: "push-to-talk",
       tools,
+      // Override the implicit `required` that realtime-voice-component sets
+      // for tool-only mode. With required, the model is forced to call a
+      // tool even on no-op turns ("um", silence, etc.), producing junk
+      // edits. Auto lets the model do nothing for those.
+      toolChoice: "auto",
+      // Ask for transcripts of the user's audio so the transcript chip + the
+      // [voice:server] event log can show what was actually heard.
+      audio: {
+        input: {
+          transcription: { model: "gpt-4o-transcribe" },
+        },
+      },
       // We auto-connect on mount.
       autoConnect: true,
-      onError: (err) => setError(err),
+      // Surface every realtime event into the console so you can debug what
+      // the model is (or isn't) doing in DevTools. Local events are
+      // voice.transport.*, voice.capture.*, voice.tool.* — server events are
+      // raw realtime.*.
+      onEvent: (event) => {
+        const t = (event as { type?: string }).type ?? "?";
+        // Skip the firehose of audio frames if it ever comes through.
+        if (t === "response.audio.delta" || t === "input_audio_buffer.append") {
+          return;
+        }
+        if (t.startsWith("voice.")) {
+          console.info("[voice:event]", t, event);
+        } else if (t === "error" || t.endsWith(".error")) {
+          console.error("[voice:server-error]", t, event);
+        } else if (
+          t.startsWith("response.") ||
+          t.startsWith("conversation.") ||
+          t.startsWith("session.") ||
+          t.startsWith("input_audio_buffer.")
+        ) {
+          console.debug("[voice:server]", t, event);
+        }
+      },
+      onToolStart: (call) => {
+        console.info("[voice:tool] start →", call.name, call.args);
+      },
+      onToolSuccess: (call) => {
+        console.info("[voice:tool] ok ←", call.name, call.output);
+      },
+      onToolError: (call) => {
+        console.error("[voice:tool] err ←", call.name, call.error);
+      },
+      onError: (err) => {
+        // Lift the structured fields explicitly so the in-app log doesn't
+        // collapse to "{}" when `cause` is a non-enumerable Error.
+        const causeMsg =
+          err.cause instanceof Error
+            ? `${err.cause.name}: ${err.cause.message}`
+            : err.cause !== undefined
+              ? String(err.cause)
+              : "(no cause)";
+        console.error(
+          "[voice:error] code=" +
+            (err.code ?? "?") +
+            " message=" +
+            (err.message ?? "(empty)") +
+            " cause=" +
+            causeMsg,
+        );
+        setError(err);
+      },
+      debug: true,
     }),
   );
 
   // Resync tools/instructions if they ever change (rare — adapter is memoised).
   useEffect(() => {
     controller.configure({
-      auth: { sessionEndpoint: "/api/realtime-session" },
+      // Use the ephemeral client-secret flow: the browser negotiates WebRTC
+      // directly with OpenAI using a short-lived secret minted by our
+      // /api/realtime-token route. This bypasses the multipart proxy entirely
+      // and is the simpler, faster, easier-to-debug path.
+      auth: {
+        getClientSecret: async () => {
+          const r = await fetch("/api/realtime-token", { method: "POST" });
+          if (!r.ok) {
+            const detail = await r.text().catch(() => "");
+            throw new Error(
+              `Failed to mint realtime client secret: ${r.status} ${detail.slice(0, 200)}`,
+            );
+          }
+          const payload = await r.json();
+          // Per the realtime-voice-component docs the value lives on
+          // payload.value, payload.client_secret.value, or payload.client_secret.
+          const secret =
+            payload.value ??
+            payload.client_secret?.value ??
+            payload.client_secret;
+          if (!secret) {
+            throw new Error(
+              `Mint route returned no client secret: ${JSON.stringify(payload).slice(0, 200)}`,
+            );
+          }
+          return secret as string;
+        },
+      },
       instructions: SYSTEM_PROMPT,
       model: "gpt-realtime",
       outputMode: "tool-only",
       activationMode: "push-to-talk",
+      toolChoice: "auto",
+      audio: {
+        input: {
+          transcription: { model: "gpt-4o-transcribe" },
+        },
+      },
       tools,
     });
   }, [controller, tools]);
@@ -231,14 +379,16 @@ export function Voice({ editorRef }: VoiceProps) {
     };
   }, [controller]);
 
-  // Subscribe to runtime snapshot for transcript + activity.
+  // Subscribe to runtime snapshot for transcript + activity + connectedness.
   const [transcript, setTranscript] = useState("");
   const [voiceActivity, setVoiceActivity] = useState<string>("idle");
+  const [connected, setConnected] = useState(false);
   useEffect(() => {
     const tick = () => {
       const snap = controller.getSnapshot();
       setTranscript(snap.transcript ?? "");
       setVoiceActivity(snap.activity);
+      setConnected(snap.connected);
     };
     tick();
     return controller.subscribe(tick);
@@ -326,6 +476,25 @@ export function Voice({ editorRef }: VoiceProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transcript]);
 
+  // Watchdog: if we sit in "thinking" or "applying" for 25s without anything
+  // happening, the model probably never produced a tool call (or the response
+  // is stuck). Force-reset and surface a hint so the user can retry.
+  useEffect(() => {
+    if (zone.status !== "thinking" && zone.status !== "applying") return;
+    const timer = setTimeout(() => {
+      console.warn("[voice:watchdog] stuck in", zone.status, "for 25s — resetting");
+      editorRef.current?.setPendingHighlight(null);
+      zone.setStatus("idle");
+      setError({
+        code: "unknown",
+        message:
+          "Model did not produce a tool call within 25s. Check DevTools console for [voice:server] events.",
+      });
+    }, 25_000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zone.status]);
+
   // Drive zone status from the controller's activity.
   useEffect(() => {
     // Only override status when locked OR when transitioning back from a tool
@@ -392,7 +561,7 @@ export function Voice({ editorRef }: VoiceProps) {
         variant="anchor"
         status={zone.status}
         isHovered={zone.hoveredZones.has("anchor")}
-        isLocked={zone.isLocked}
+        isLocked={zone.isLocked || !connected}
         onEnter={zone.enter}
         onLeave={zone.leave}
         onZoneRect={onZoneRect}
@@ -402,7 +571,7 @@ export function Voice({ editorRef }: VoiceProps) {
         anchorRect={selectionZoneRect}
         status={zone.status}
         isHovered={zone.hoveredZones.has("selection")}
-        isLocked={zone.isLocked}
+        isLocked={zone.isLocked || !connected}
         onEnter={zone.enter}
         onLeave={zone.leave}
         onZoneRect={onZoneRect}
@@ -412,7 +581,10 @@ export function Voice({ editorRef }: VoiceProps) {
         visible={zone.status === "listening" || zone.status === "grace"}
         anchorRect={activeZoneRect}
       />
-      <StatusPill status={mapStatus(zone.status, voiceActivity)} />
+      <StatusPill
+        status={mapStatus(zone.status, voiceActivity)}
+        connected={connected}
+      />
       <ErrorBanner
         error={error}
         onRetry={() => {
@@ -472,6 +644,7 @@ export function Voice({ editorRef }: VoiceProps) {
         }}
       />
       <GhostCursorOverlay state={ghost.cursorState} />
+      <DebugLog />
     </>
   );
 }
