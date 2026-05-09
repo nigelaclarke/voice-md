@@ -7,7 +7,7 @@
 // Both bind to the SAME enter(zone)/leave(zone) handlers — drift between
 // them mid-thought without truncating the turn.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import type { ZoneId, ZoneStatus } from "@/lib/zone-state";
 
 interface BaseProps {

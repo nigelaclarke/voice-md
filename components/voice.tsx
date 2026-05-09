@@ -41,7 +41,7 @@ import {
   type SurfaceSpec,
   type TransformSelectionArgs,
 } from "@/lib/tools";
-import { uiStore, useUIState } from "@/lib/ui-state";
+import { uiStore } from "@/lib/ui-state";
 import { useZoneState, type ZoneId, type ZoneStatus } from "@/lib/zone-state";
 
 interface VoiceProps {
@@ -126,10 +126,6 @@ export function Voice({ editorRef }: VoiceProps) {
       prev[zone] === rect ? prev : { ...prev, [zone]: rect },
     );
   }, []);
-
-  // ---- UI state (active surface, last transform) ----
-
-  const ui = useUIState();
 
   // ---- Voice adapter (stable ref; closes over editor + ui-state) ----
 
@@ -228,7 +224,6 @@ export function Voice({ editorRef }: VoiceProps) {
   // Connect on mount; destroy on unmount.
   useEffect(() => {
     void controller.connect().catch((err) => {
-      // eslint-disable-next-line no-console
       console.error("[voice] connect failed:", err);
     });
     return () => {
@@ -423,7 +418,6 @@ export function Voice({ editorRef }: VoiceProps) {
         onRetry={() => {
           setError(null);
           void controller.connect().catch((err) => {
-            // eslint-disable-next-line no-console
             console.error("[voice] reconnect failed:", err);
           });
         }}
