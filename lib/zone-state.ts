@@ -49,10 +49,18 @@ export interface ZoneStateController {
 
 const GRACE_MS = 250;
 
+// Below this hover duration we treat the turn as an accidental brush and
+// discard without committing. Above it, we commit even if no audio activity
+// was reported — the model will produce no tool call on silent input (per the
+// prompt) which is harmless. Setting this slightly longer than the 250ms
+// grace means a brief in-and-out doesn't trigger a turn at all.
+const MIN_TURN_DURATION_MS = 350;
+
 export function createZoneState(callbacks: ZoneStateCallbacks): ZoneStateController {
   let status: ZoneStatus = "idle";
   let hoveredZones = new Set<ZoneId>();
   let capturedAnyAudio = false;
+  let turnOpenedAt = 0;
   let graceTimer: ReturnType<typeof setTimeout> | null = null;
   const subscribers = new Set<(s: ZoneStateSnapshot) => void>();
 
@@ -82,12 +90,16 @@ export function createZoneState(callbacks: ZoneStateCallbacks): ZoneStateControl
   }
 
   function enter(zone: ZoneId) {
-    if (isLocked()) return; // ignore re-hover during thinking/applying
+    if (isLocked()) {
+      console.info("[voice:fsm] enter", zone, "ignored (locked, status=" + status + ")");
+      return;
+    }
     const wasEmpty = hoveredZones.size === 0;
     hoveredZones.add(zone);
 
     if (status === "grace") {
       clearGrace();
+      console.info("[voice:fsm] enter", zone, "→ cancel grace, back to listening");
       status = "listening";
       emit();
       return;
@@ -95,34 +107,73 @@ export function createZoneState(callbacks: ZoneStateCallbacks): ZoneStateControl
 
     if (wasEmpty && status === "idle") {
       capturedAnyAudio = false;
+      turnOpenedAt = Date.now();
       status = "listening";
+      console.info("[voice:fsm] enter", zone, "→ idle→listening, opening turn");
       callbacks.onTurnOpen();
       emit();
+      return;
     }
+    console.info(
+      "[voice:fsm] enter",
+      zone,
+      "→ no transition (status=" + status + ", hovered=" + hoveredZones.size + ")",
+    );
+    emit();
   }
 
   function leave(zone: ZoneId) {
     hoveredZones.delete(zone);
     if (hoveredZones.size > 0) {
+      console.info(
+        "[voice:fsm] leave",
+        zone,
+        "→ still hovering (size=" + hoveredZones.size + ")",
+      );
       emit();
       return;
     }
     if (status !== "listening" && status !== "grace") {
+      console.info(
+        "[voice:fsm] leave",
+        zone,
+        "→ no transition (status=" + status + ")",
+      );
       emit();
       return;
     }
     // Both zones empty — start grace.
     status = "grace";
     clearGrace();
+    console.info("[voice:fsm] leave", zone, "→ grace timer (" + GRACE_MS + "ms)");
     graceTimer = setTimeout(() => {
       graceTimer = null;
-      // Commit only if we actually captured something.
-      if (capturedAnyAudio) {
+      // Decide commit vs discard from hover duration. The previous heuristic
+      // (capturedAnyAudio from controller.transcript) was bogus — that field
+      // tracks the ASSISTANT's text output, which stays empty in tool-only
+      // mode, so it always evaluated to false and every turn was discarded.
+      // Now: a turn longer than MIN_TURN_DURATION_MS is treated as
+      // intentional. Audio that arrived is reported via reportAudioActivity()
+      // for telemetry only.
+      const turnDuration = Date.now() - turnOpenedAt;
+      if (turnDuration >= MIN_TURN_DURATION_MS) {
         status = "thinking";
+        console.info(
+          "[voice:fsm] grace expired → COMMIT (turn=" +
+            turnDuration +
+            "ms, audioReported=" +
+            capturedAnyAudio +
+            ")",
+        );
         callbacks.onLockChange?.(true);
         callbacks.onTurnCommit();
       } else {
         status = "idle";
+        console.info(
+          "[voice:fsm] grace expired → DISCARD (turn=" +
+            turnDuration +
+            "ms, too short — accidental brush)",
+        );
         callbacks.onTurnDiscard();
       }
       emit();
@@ -133,14 +184,18 @@ export function createZoneState(callbacks: ZoneStateCallbacks): ZoneStateControl
   function reportAudioActivity() {
     if (!capturedAnyAudio) {
       capturedAnyAudio = true;
+      console.info("[voice:fsm] audio activity reported (transcript appeared)");
       emit();
     }
   }
 
   function setStatus(next: ZoneStatus) {
+    const prev = status;
+    if (prev === next) return;
     const prevLocked = isLocked();
     status = next;
     const nextLocked = isLocked();
+    console.info("[voice:fsm] setStatus", prev, "→", next);
     if (prevLocked !== nextLocked) {
       callbacks.onLockChange?.(nextLocked);
     }

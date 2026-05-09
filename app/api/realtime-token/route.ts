@@ -33,7 +33,7 @@ export async function POST(): Promise<Response> {
       body: JSON.stringify({
         session: {
           type: "realtime",
-          model: "gpt-realtime",
+          model: "gpt-realtime-1.5",
         },
       }),
     });

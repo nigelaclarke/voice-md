@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(curl -sL \"https://raw.githubusercontent.com/openai/realtime-voice-component/332285bf41f321353b63ad6d79ac2cab0059a13a/demo/src/demos/shared/session.tsx\")",
+      "WebSearch"
+    ]
+  }
+}

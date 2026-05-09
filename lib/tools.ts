@@ -90,8 +90,13 @@ const insertAtCursorParams = z.object({
     .describe("The markdown to insert at the cursor (no selection case)."),
 });
 
-// renderUI's parameters ARE the surface spec — discriminated by type.
-const renderUIParams = surfaceSpec;
+// renderUI's parameters wrap the surface spec in an outer object. OpenAI's
+// function-calling validator rejects discriminated unions as the root
+// (`type: "object"` is required at the top level), so we put the union on
+// a `surface` field.
+const renderUIParams = z.object({
+  surface: surfaceSpec,
+});
 
 export type TransformSelectionArgs = z.infer<typeof transformSelectionParams>;
 export type InsertAtCursorArgs = z.infer<typeof insertAtCursorParams>;
@@ -136,11 +141,11 @@ export function buildTools(adapter: VoiceAdapter): VoiceTool<any>[] {
   const renderUI = defineVoiceTool({
     name: "renderUI",
     description:
-      "Optional Stage 2: render a follow-up affordance under the just-edited selection. Use only when the affordance genuinely helps continued iteration. Three component types: dial (axis variants), cards (ambiguous selection), chip (single follow-up offer). Omit entirely if no affordance fits.",
+      "Optional Stage 2: render a follow-up affordance under the just-edited selection. Use only when the affordance genuinely helps continued iteration. The `surface` argument is one of three component types: dial (axis variants), cards (ambiguous selection), chip (single follow-up offer). Omit the call entirely if no affordance fits.",
     parameters: renderUIParams,
     execute: async (args) => {
-      adapter.showSurface(args);
-      return { ok: true, surfaceType: args.type };
+      adapter.showSurface(args.surface);
+      return { ok: true, surfaceType: args.surface.type };
     },
   });
 

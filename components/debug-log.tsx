@@ -11,7 +11,7 @@ interface LogLine {
   msg: string;
 }
 
-const LIMIT = 80;
+const LIMIT = 500;
 
 export function DebugLog() {
   const [lines, setLines] = useState<LogLine[]>([]);

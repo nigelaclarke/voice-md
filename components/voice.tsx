@@ -220,6 +220,12 @@ export function Voice({ editorRef }: VoiceProps) {
 
   const [error, setError] = useState<VoiceControlError | null>(null);
 
+  // Ring buffer of the last 30 server events. Dumped to the log when the
+  // watchdog fires so we can see what the model actually did (or didn't).
+  const recentEventsRef = useRef<Array<{ ts: number; type: string; event: unknown }>>(
+    [],
+  );
+
   const [controller] = useState(() =>
     createVoiceControlController({
       // Use the ephemeral client-secret flow: the browser negotiates WebRTC
@@ -251,7 +257,9 @@ export function Voice({ editorRef }: VoiceProps) {
         },
       },
       instructions: SYSTEM_PROMPT,
-      model: "gpt-realtime",
+      // gpt-realtime-1.5 is the GA model OpenAI's demos run on; gpt-realtime
+      // is older. Both are available on the account (we listed /v1/models).
+      model: "gpt-realtime-1.5",
       outputMode: "tool-only",
       activationMode: "push-to-talk",
       tools,
@@ -267,8 +275,10 @@ export function Voice({ editorRef }: VoiceProps) {
           transcription: { model: "gpt-4o-transcribe" },
         },
       },
-      // We auto-connect on mount.
-      autoConnect: true,
+      // We DON'T autoConnect; we connect explicitly in the mount effect
+      // below so we get clean timing telemetry and a single deterministic
+      // connect path (autoConnect would race with the explicit call).
+      autoConnect: false,
       // Surface every realtime event into the console so you can debug what
       // the model is (or isn't) doing in DevTools. Local events are
       // voice.transport.*, voice.capture.*, voice.tool.* — server events are
@@ -279,17 +289,64 @@ export function Voice({ editorRef }: VoiceProps) {
         if (t === "response.audio.delta" || t === "input_audio_buffer.append") {
           return;
         }
+        // Capture into the ring buffer for the watchdog dump.
+        const buf = recentEventsRef.current;
+        buf.push({ ts: Date.now(), type: t, event });
+        if (buf.length > 30) buf.shift();
+
+        // Surface the user's transcribed audio prominently — that's how we
+        // confirm the mic is actually capturing speech (vs the assistant's
+        // text response which lives on the controller's `transcript` field).
+        if (t === "conversation.item.input_audio_transcription.completed") {
+          const ev = event as { transcript?: string };
+          console.info(
+            "[voice:user-said]",
+            JSON.stringify(ev.transcript ?? "").slice(0, 200),
+          );
+        } else if (t === "conversation.item.input_audio_transcription.failed") {
+          const ev = event as { error?: { message?: string } };
+          console.warn(
+            "[voice:user-said] FAILED:",
+            ev.error?.message ?? JSON.stringify(event).slice(0, 200),
+          );
+        }
+
         if (t.startsWith("voice.")) {
-          console.info("[voice:event]", t, event);
-        } else if (t === "error" || t.endsWith(".error")) {
-          console.error("[voice:server-error]", t, event);
+          // Library-emitted local lifecycle events.
+          console.info("[voice:event]", t);
+        } else if (t === "error" || t.endsWith(".error") || t === "response.failed") {
+          console.error("[voice:server-error]", t, JSON.stringify(event).slice(0, 600));
+        } else if (
+          // Highest-signal events: full payload.
+          t === "session.created" ||
+          t === "session.updated" ||
+          t === "response.created" ||
+          t === "response.done" ||
+          t === "response.output_item.added" ||
+          t === "response.output_item.done" ||
+          t === "response.function_call_arguments.done" ||
+          t === "response.text.done" ||
+          t === "response.output_text.done" ||
+          t === "conversation.item.input_audio_transcription.delta" ||
+          t === "conversation.item.input_audio_transcription.completed" ||
+          t === "conversation.item.input_audio_transcription.failed" ||
+          t === "input_audio_buffer.committed" ||
+          t === "input_audio_buffer.speech_started" ||
+          t === "input_audio_buffer.speech_stopped"
+        ) {
+          console.info("[voice:server]", t, JSON.stringify(event).slice(0, 800));
         } else if (
           t.startsWith("response.") ||
           t.startsWith("conversation.") ||
           t.startsWith("session.") ||
-          t.startsWith("input_audio_buffer.")
+          t.startsWith("input_audio_buffer.") ||
+          t.startsWith("rate_limits.")
         ) {
-          console.debug("[voice:server]", t, event);
+          // Lower-signal events: type only.
+          console.debug("[voice:server]", t);
+        } else {
+          // Anything we don't recognize — log so we don't miss it.
+          console.debug("[voice:server:?]", t);
         }
       },
       onToolStart: (call) => {
@@ -324,68 +381,130 @@ export function Voice({ editorRef }: VoiceProps) {
     }),
   );
 
-  // Resync tools/instructions if they ever change (rare — adapter is memoised).
-  useEffect(() => {
-    controller.configure({
-      // Use the ephemeral client-secret flow: the browser negotiates WebRTC
-      // directly with OpenAI using a short-lived secret minted by our
-      // /api/realtime-token route. This bypasses the multipart proxy entirely
-      // and is the simpler, faster, easier-to-debug path.
-      auth: {
-        getClientSecret: async () => {
-          const r = await fetch("/api/realtime-token", { method: "POST" });
-          if (!r.ok) {
-            const detail = await r.text().catch(() => "");
-            throw new Error(
-              `Failed to mint realtime client secret: ${r.status} ${detail.slice(0, 200)}`,
-            );
-          }
-          const payload = await r.json();
-          // Per the realtime-voice-component docs the value lives on
-          // payload.value, payload.client_secret.value, or payload.client_secret.
-          const secret =
-            payload.value ??
-            payload.client_secret?.value ??
-            payload.client_secret;
-          if (!secret) {
-            throw new Error(
-              `Mint route returned no client secret: ${JSON.stringify(payload).slice(0, 200)}`,
-            );
-          }
-          return secret as string;
-        },
-      },
-      instructions: SYSTEM_PROMPT,
-      model: "gpt-realtime",
-      outputMode: "tool-only",
-      activationMode: "push-to-talk",
-      toolChoice: "auto",
-      audio: {
-        input: {
-          transcription: { model: "gpt-4o-transcribe" },
-        },
-      },
-      tools,
-    });
-  }, [controller, tools]);
+  // NOTE: We do NOT call `controller.configure()` after mount. `configure()`
+  // replaces the entire options object — which would wipe our onEvent,
+  // onError, onToolStart, etc. callbacks unless we pass them again. Since
+  // our tools/adapter are memoised stable for the component's lifetime, the
+  // initial options passed to createVoiceControlController are already
+  // correct. If tools genuinely changed, we'd use `controller.updateTools()`,
+  // which doesn't touch callbacks.
+  //
+  // Earlier we WERE calling configure(), and it silently dropped the
+  // callbacks — that's why we never saw [voice:server] events or error
+  // reasons after the first frame. The model was responding from its DEFAULT
+  // persona because session.update was failing, and we were blind to the
+  // failure.
 
-  // Connect on mount; destroy on unmount.
+  // Connect on mount; destroy on unmount. Time the handshake.
   useEffect(() => {
-    void controller.connect().catch((err) => {
-      console.error("[voice] connect failed:", err);
-    });
+    const t0 = Date.now();
+    console.info("[voice:lifecycle] controller.connect() — starting WebRTC handshake");
+    void controller.connect().then(
+      () => {
+        console.info(
+          "[voice:lifecycle] controller.connect() RESOLVED in",
+          Date.now() - t0,
+          "ms",
+        );
+      },
+      (err) => {
+        console.error(
+          "[voice:lifecycle] controller.connect() REJECTED in",
+          Date.now() - t0,
+          "ms —",
+          err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+        );
+      },
+    );
     return () => {
+      console.info("[voice:lifecycle] controller.destroy()");
       controller.destroy();
     };
   }, [controller]);
 
   // Subscribe to runtime snapshot for transcript + activity + connectedness.
+  // Verbose: log every transition so we can see when connection completes,
+  // when activity flips processing → executing → listening, and when
+  // transcript first appears.
   const [transcript, setTranscript] = useState("");
   const [voiceActivity, setVoiceActivity] = useState<string>("idle");
   const [connected, setConnected] = useState(false);
+  const prevSnapshotRef = useRef<{
+    activity: string;
+    connected: boolean;
+    status: string;
+    transcript: string;
+    toolCalls: number;
+  }>({
+    activity: "idle",
+    connected: false,
+    status: "idle",
+    transcript: "",
+    toolCalls: 0,
+  });
   useEffect(() => {
     const tick = () => {
       const snap = controller.getSnapshot();
+      const prev = prevSnapshotRef.current;
+      if (snap.connected !== prev.connected) {
+        console.info(
+          "[voice:snap] connected",
+          prev.connected,
+          "→",
+          snap.connected,
+        );
+      }
+      if (snap.activity !== prev.activity) {
+        console.info(
+          "[voice:snap] activity",
+          prev.activity,
+          "→",
+          snap.activity,
+        );
+      }
+      if (snap.status !== prev.status) {
+        console.info(
+          "[voice:snap] status",
+          prev.status,
+          "→",
+          snap.status,
+        );
+      }
+      // Transcript fires once PER CHARACTER as the model streams. Logging
+      // every delta floods the log and pushes session.updated /
+      // response.created out of the buffer. Only log:
+      //   - the first non-empty chunk (start of stream)
+      //   - the final stable text (we'll catch it on the next "" reset).
+      if (snap.transcript !== prev.transcript) {
+        const wasEmpty = (prev.transcript ?? "").length === 0;
+        const isEmpty = (snap.transcript ?? "").length === 0;
+        if (wasEmpty && !isEmpty) {
+          console.info("[voice:snap] transcript-start:", JSON.stringify(snap.transcript ?? "").slice(0, 120));
+        } else if (!wasEmpty && isEmpty) {
+          console.info("[voice:snap] transcript-cleared (final was:", JSON.stringify(prev.transcript ?? "").slice(0, 200), ")");
+        }
+        // Mid-stream deltas are NOT logged — open the in-app log to see the
+        // surrounding events instead.
+      }
+      if (snap.toolCalls.length !== prev.toolCalls) {
+        const latest = snap.toolCalls[snap.toolCalls.length - 1];
+        console.info(
+          "[voice:snap] toolCalls",
+          prev.toolCalls,
+          "→",
+          snap.toolCalls.length,
+          latest
+            ? `latest=${latest.name}(${latest.status})`
+            : "",
+        );
+      }
+      prevSnapshotRef.current = {
+        activity: snap.activity,
+        connected: snap.connected,
+        status: snap.status,
+        transcript: snap.transcript ?? "",
+        toolCalls: snap.toolCalls.length,
+      };
       setTranscript(snap.transcript ?? "");
       setVoiceActivity(snap.activity);
       setConnected(snap.connected);
@@ -398,8 +517,12 @@ export function Voice({ editorRef }: VoiceProps) {
 
   const zone = useZoneState({
     onTurnOpen: () => {
+      console.info("[voice:zone] onTurnOpen — opening turn");
       const handle = editorRef.current;
-      if (!handle) return;
+      if (!handle) {
+        console.warn("[voice:zone] onTurnOpen: editor handle not ready");
+        return;
+      }
 
       // 1. Snapshot the selection. If there's no selection but an affordance
       // surface is active, treat the last-transform's range as the implicit
@@ -411,6 +534,10 @@ export function Voice({ editorRef }: VoiceProps) {
       if (sel) {
         pendingRangeRef.current = { from: sel.from, to: sel.to, text: sel.text };
         pendingRectRef.current = handle.getSelectionRect();
+        console.info(
+          "[voice:zone] snapshot from selection",
+          { from: sel.from, to: sel.to, textLength: sel.text.length },
+        );
       } else if (surfaceActive && lt) {
         pendingRangeRef.current = {
           from: lt.range.from,
@@ -418,9 +545,14 @@ export function Voice({ editorRef }: VoiceProps) {
           text: lt.currentText,
         };
         pendingRectRef.current = lt.anchorRect;
+        console.info(
+          "[voice:zone] snapshot from active-surface lastTransform",
+          { from: lt.range.from, to: lt.range.to },
+        );
       } else {
         pendingRangeRef.current = null;
         pendingRectRef.current = null;
+        console.info("[voice:zone] no selection — empty turn (insertAtCursor path)");
       }
 
       // 2. Pending highlight for the snapshotted range.
@@ -441,6 +573,10 @@ export function Voice({ editorRef }: VoiceProps) {
         fullDocument,
         activeSurface: uiStore.snapshot.activeSurface?.spec ?? null,
       });
+      console.info(
+        "[voice:zone] sending context message",
+        { docLength: fullDocument.length, ctxLength: ctxMsg.length, hasSurface: !!uiStore.snapshot.activeSurface },
+      );
       controller.sendClientEvent({
         type: "conversation.item.create",
         item: {
@@ -451,14 +587,17 @@ export function Voice({ editorRef }: VoiceProps) {
       });
 
       // 4. Start the audio capture (push-to-talk).
+      console.info("[voice:zone] startCapture");
       controller.startCapture();
     },
     onTurnCommit: () => {
       // stopCapture sends input_audio_buffer.commit + response.create.
+      console.info("[voice:zone] onTurnCommit — stopCapture (commit + response.create)");
       controller.stopCapture();
     },
     onTurnDiscard: () => {
       // Discard the (silent / no-text) buffer before the model spends tokens.
+      console.info("[voice:zone] onTurnDiscard — buffer.clear, no commit");
       controller.sendClientEvent({ type: "input_audio_buffer.clear" });
       // Clear pending highlight.
       editorRef.current?.setPendingHighlight(null);
@@ -478,17 +617,39 @@ export function Voice({ editorRef }: VoiceProps) {
 
   // Watchdog: if we sit in "thinking" or "applying" for 25s without anything
   // happening, the model probably never produced a tool call (or the response
-  // is stuck). Force-reset and surface a hint so the user can retry.
+  // is stuck). Force-reset, dump the last 30 server events for diagnosis, and
+  // surface a hint so the user can retry.
   useEffect(() => {
     if (zone.status !== "thinking" && zone.status !== "applying") return;
     const timer = setTimeout(() => {
-      console.warn("[voice:watchdog] stuck in", zone.status, "for 25s — resetting");
+      console.warn(
+        "[voice:watchdog] stuck in",
+        zone.status,
+        "for 25s — resetting. Dumping last events:",
+      );
+      const buf = recentEventsRef.current.slice(-30);
+      if (buf.length === 0) {
+        console.warn("[voice:watchdog]   (no server events captured this turn)");
+      } else {
+        for (const entry of buf) {
+          const dt = new Date(entry.ts).toISOString().slice(11, 23);
+          const ev = entry.event as Record<string, unknown>;
+          // Pull common diagnostic fields explicitly.
+          const detail =
+            entry.type === "response.done"
+              ? ` status=${(ev?.response as { status?: unknown })?.status ?? "?"}`
+              : entry.type === "response.failed" || entry.type === "error"
+                ? ` ${JSON.stringify(ev).slice(0, 240)}`
+                : "";
+          console.warn(`[voice:watchdog]   ${dt} ${entry.type}${detail}`);
+        }
+      }
       editorRef.current?.setPendingHighlight(null);
       zone.setStatus("idle");
       setError({
         code: "unknown",
         message:
-          "Model did not produce a tool call within 25s. Check DevTools console for [voice:server] events.",
+          "Model did not produce a tool call within 25s. The log above shows what the model received and emitted.",
       });
     }, 25_000);
     return () => clearTimeout(timer);
@@ -506,9 +667,11 @@ export function Voice({ editorRef }: VoiceProps) {
       if (zone.status !== "thinking" && zone.status !== "applying") {
         zone.setStatus("thinking");
       }
-    } else if (voiceActivity === "idle") {
-      // Tool flow finished. Clear pending highlight (in case discarded turn
-      // didn't clear it) and go to idle.
+    } else if (voiceActivity === "idle" || voiceActivity === "listening") {
+      // After a response completes, the controller's restingActivity is
+      // "listening" while connected (only "idle" when disconnected) — so we
+      // reset zone status on EITHER. Without this, zone sits in "thinking"
+      // forever after a model response, even on success.
       if (zone.status === "applying" || zone.status === "thinking") {
         editorRef.current?.setPendingHighlight(null);
         zone.setStatus("idle");
