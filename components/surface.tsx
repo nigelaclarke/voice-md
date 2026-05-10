@@ -9,7 +9,6 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { AlternativeCards, Chip, Dial } from "@/components/catalog";
 import type { EditorHandle } from "@/components/editor";
 import { uiStore, useUIState } from "@/lib/ui-state";
-import type { SurfaceSpec } from "@/lib/tools";
 
 interface SurfaceProps {
   editorRef: RefObject<EditorHandle | null>;
@@ -181,21 +180,10 @@ export function Surface({
   return (
     <div
       ref={wrapperRef}
-      className="pointer-events-auto fixed z-30 max-w-md min-w-[16rem] rounded-lg border border-[var(--color-border)] bg-[var(--color-background)]/95 p-2 shadow-lg backdrop-blur"
-      style={{ top: position.top, left: position.left }}
+      className="surface entered"
+      style={{ top: position.top, left: position.left, pointerEvents: "auto" }}
     >
       {renderInner()}
-      <div className="mt-1 flex items-center justify-between border-t border-[var(--color-border)]/50 px-1 pt-1 text-[10px] text-[var(--color-muted)]">
-        <span className="uppercase tracking-wider">{spec.type}</span>
-        <button
-          type="button"
-          onClick={dismiss}
-          className="rounded px-1.5 py-0.5 hover:bg-[var(--color-border)]/40"
-          aria-label="Dismiss surface"
-        >
-          dismiss
-        </button>
-      </div>
     </div>
   );
 }

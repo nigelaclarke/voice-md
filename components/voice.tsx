@@ -32,7 +32,6 @@ import {
 import type { EditorHandle, SelectionInfo } from "@/components/editor";
 import { DebugLog } from "@/components/debug-log";
 import { ErrorBanner } from "@/components/error-banner";
-import { StatusPill } from "@/components/status-pill";
 import { TalkZone } from "@/components/talk-zone";
 import { TranscriptChip } from "@/components/transcript-chip";
 import { Surface } from "@/components/surface";
@@ -44,15 +43,17 @@ import {
   type TransformSelectionArgs,
 } from "@/lib/tools";
 import { uiStore } from "@/lib/ui-state";
-import { useZoneState, type ZoneId, type ZoneStatus } from "@/lib/zone-state";
+import { useZoneState, type ZoneId } from "@/lib/zone-state";
 
 interface VoiceProps {
   editorRef: RefObject<EditorHandle | null>;
+  // When false, hide the selection zone (e.g. while in source view).
+  selectionZoneEnabled?: boolean;
 }
 
 const SELECTION_ZONE_APPEAR_DELAY = 250;
 
-export function Voice({ editorRef }: VoiceProps) {
+export function Voice({ editorRef, selectionZoneEnabled = true }: VoiceProps) {
   // ---- Selection-rect tracking (for the selection-following talk zone) ----
 
   const [pendingSelectionRect, setPendingSelectionRect] = useState<DOMRect | null>(
@@ -128,19 +129,14 @@ export function Voice({ editorRef }: VoiceProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingSelectionRect]);
 
-  // ---- Zone DOMRects (for transcript chip anchoring) ----
+  // ---- Zone DOMRect (for transcript chip anchoring) ----
 
-  const [zoneRects, setZoneRects] = useState<{
-    anchor: DOMRect | null;
-    selection: DOMRect | null;
-  }>({ anchor: null, selection: null });
-  const onZoneRect = useCallback((zone: ZoneId, rect: DOMRect | null) => {
-    // Same DOMRect-reference trap as above — the ResizeObserver inside
-    // TalkZone calls this on every layout pass with a fresh DOMRect, so we
-    // MUST compare by value or we'd re-render forever.
-    setZoneRects((prev) =>
-      rectsEqual(prev[zone], rect) ? prev : { ...prev, [zone]: rect },
-    );
+  const [selectionZoneScreenRect, setSelectionZoneScreenRect] =
+    useState<DOMRect | null>(null);
+  const onZoneRect = useCallback((_zone: ZoneId, rect: DOMRect | null) => {
+    // Same DOMRect-reference trap — the ResizeObserver inside TalkZone calls
+    // this on every layout pass with a fresh DOMRect; compare by value.
+    setSelectionZoneScreenRect((prev) => (rectsEqual(prev, rect) ? prev : rect));
   }, []);
 
   // ---- Voice adapter (stable ref; closes over editor + ui-state) ----
@@ -820,40 +816,22 @@ export function Voice({ editorRef }: VoiceProps) {
 
   // ---- Render ----
 
-  const activeZoneRect =
-    zone.hoveredZones.has("anchor")
-      ? zoneRects.anchor
-      : zoneRects.selection;
-
   return (
     <>
-      <TalkZone
-        variant="anchor"
-        status={zone.status}
-        isHovered={zone.hoveredZones.has("anchor")}
-        isLocked={zone.isLocked || !connected}
-        onEnter={zone.enter}
-        onLeave={zone.leave}
-        onZoneRect={onZoneRect}
-      />
-      <TalkZone
-        variant="selection"
-        anchorRect={selectionZoneRect}
-        status={zone.status}
-        isHovered={zone.hoveredZones.has("selection")}
-        isLocked={zone.isLocked || !connected}
-        onEnter={zone.enter}
-        onLeave={zone.leave}
-        onZoneRect={onZoneRect}
-      />
+      {selectionZoneEnabled && (
+        <TalkZone
+          status={zone.status}
+          isLocked={zone.isLocked || !connected}
+          anchorRect={selectionZoneRect}
+          onEnter={zone.enter}
+          onLeave={zone.leave}
+          onZoneRect={onZoneRect}
+        />
+      )}
       <TranscriptChip
         text={transcript}
         visible={zone.status === "listening" || zone.status === "grace"}
-        anchorRect={activeZoneRect}
-      />
-      <StatusPill
-        status={mapStatus(zone.status, voiceActivity)}
-        connected={connected}
+        anchorRect={selectionZoneScreenRect}
       />
       <ErrorBanner
         error={error}
@@ -917,12 +895,6 @@ export function Voice({ editorRef }: VoiceProps) {
       <DebugLog />
     </>
   );
-}
-
-function mapStatus(zone: ZoneStatus, activity: string): ZoneStatus {
-  if (zone === "thinking" || zone === "applying") return zone;
-  if (activity === "connecting") return "thinking";
-  return zone;
 }
 
 // DOMRect references change every call (getBoundingClientRect /

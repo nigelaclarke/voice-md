@@ -10,16 +10,22 @@ interface TranscriptChipProps {
 export function TranscriptChip({ text, visible, anchorRect }: TranscriptChipProps) {
   if (!visible || !text || !anchorRect) return null;
 
-  // Position above the anchor, right-aligned to it.
-  const top = Math.max(8, anchorRect.top - 48);
-  const left = Math.max(8, anchorRect.right - 320);
+  // Chip sits above the zone with a small gap, and its right edge roughly
+  // aligns with the zone's right edge so the chip extends leftward into the
+  // doc's gutter rather than off-screen on narrow viewports.
+  const chipMaxWidth = 320;
+  const gap = 12;
+  const chipApproxHeight = 32;
+  const top = Math.max(8, anchorRect.top - chipApproxHeight - gap);
+  const left = Math.max(8, anchorRect.right - chipMaxWidth);
 
   return (
-    <div
-      className="pointer-events-none fixed z-50 max-w-[20rem] truncate rounded-full border border-[var(--color-border)] bg-[var(--color-background)]/95 px-3 py-1.5 text-xs text-[var(--color-foreground)] shadow-md backdrop-blur"
-      style={{ top, left }}
-    >
-      {text}
+    <div className="chip" style={{ top, left, maxWidth: chipMaxWidth }}>
+      <span className="live-dot" />
+      <span className="text">
+        {text}
+        <span className="caret" />
+      </span>
     </div>
   );
 }

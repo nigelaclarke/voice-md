@@ -52,29 +52,29 @@ export interface EditorHandle {
   focus: () => void;
 }
 
-const INITIAL_DOC = `# VoiceMD
+// Default sample document. Exported so the start screen can offer it as the
+// "open sample document" button content.
+export const SAMPLE_DOC = `# Q3 strategy sync
 
-Hover the talk zone, speak an instruction about the **selected text**, then move your mouse out to commit. The rewrite streams in and replaces the selection.
+> meeting · oct 14 · attended by 6
 
-## Try this
+We met to align on priorities for Q3 and surface blockers before the planning offsite. The conversation moved between revenue concerns and the platform migration timeline, with most of the disagreement concentrated on resourcing.
 
-Select any text below and try voice commands like:
+## Decisions
 
-- *"make this more concise"*
-- *"reformat as a table"*
-- *"summarize this section"*
-- *"rewrite in a friendlier tone"*
+- Ship the redesigned dashboard before Q3 close
+- Pause the marketing site refresh until after launch
+- Hire two more engineers, both senior, both backend
 
-## Sample paragraph
+## Open questions
 
-VoiceMD is an experiment in voice-first editing where the gesture *is* the turn boundary: mouse in means listening, mouse out means act. The model decides the post-edit affordance — a length dial, alternate cards, a follow-up chip — and the surface arrives a beat after the text lands.
+- Do we extend the contract with Acme through end of year, or renegotiate now?
+- Who owns the migration runbook — Devon or Priya?
+- Should the data export feature be gated to Pro tier or free for all paying users?
 
-## Sample list
+## Next steps
 
-- First item with some prose around it
-- Second item, a little longer than the first
-- Third item that maybe wants reordering
-
+By Friday, Devon will draft the resourcing proposal. Priya is going to review the migration timeline against the contract terms. We'll reconvene Monday at 10am to lock the plan.
 `;
 
 // ---- Decoration plugin: pending + fresh highlights -----------------------
@@ -161,15 +161,20 @@ const decorationPlugin = new Plugin<DecorationState>({
 // ---- The component -------------------------------------------------------
 
 interface InnerProps {
+  initialDoc: string;
   onReady: (handle: EditorHandle) => void;
 }
 
-function MilkdownInner({ onReady }: InnerProps) {
+function MilkdownInner({ initialDoc, onReady }: InnerProps) {
+  // Milkdown's parser needs at least one paragraph. An empty string would
+  // produce an editor with no editable position; substitute a single newline
+  // so the user can start typing into a fresh empty paragraph.
+  const safeInitial = initialDoc.length > 0 ? initialDoc : "\n";
   const { loading, get } = useEditor((root) =>
     MilkdownEditor.make()
       .config((ctx) => {
         ctx.set(rootCtx, root);
-        ctx.set(defaultValueCtx, INITIAL_DOC);
+        ctx.set(defaultValueCtx, safeInitial);
       })
       .use(commonmark)
       // GFM adds tables, strikethrough, task lists, and autolinks. Without
@@ -204,14 +209,20 @@ function MilkdownInner({ onReady }: InnerProps) {
     onReady(buildHandle(editor));
   }, [loading, get, onReady]);
 
+  // The .doc-wrap parent handles centering/padding; .voicemd-editor here
+  // matches the design's .doc max-width and right gutter.
   return (
-    <div className="voicemd-editor mx-auto w-full max-w-3xl px-6 py-12">
+    <div className="voicemd-editor doc">
       <Milkdown />
     </div>
   );
 }
 
-const VoiceMDEditor = forwardRef<EditorHandle>((_, ref) => {
+interface EditorProps {
+  initialDoc?: string;
+}
+
+const VoiceMDEditor = forwardRef<EditorHandle, EditorProps>((props, ref) => {
   const handleRef = useRef<EditorHandle | null>(null);
 
   const onReady = useCallback((handle: EditorHandle) => {
@@ -241,7 +252,7 @@ const VoiceMDEditor = forwardRef<EditorHandle>((_, ref) => {
 
   return (
     <MilkdownProvider>
-      <MilkdownInner onReady={onReady} />
+      <MilkdownInner initialDoc={props.initialDoc ?? SAMPLE_DOC} onReady={onReady} />
     </MilkdownProvider>
   );
 });
