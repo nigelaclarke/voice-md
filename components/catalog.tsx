@@ -269,7 +269,18 @@ export function AlternativeCards({
 
   const handleEnter = (index: number, full: string) => {
     setHoveredIndex(index);
-    if (baseline === null || full === baseline) return;
+    if (baseline === null) return;
+    // The card matches baseline. If we previously previewed a DIFFERENT card,
+    // the doc is currently showing that other variant — we need to revert to
+    // baseline. If no preview is active, the doc is already at baseline and
+    // there's nothing to do (the early-return-only behavior of the old code).
+    if (full === baseline) {
+      if (previewActiveRef.current) {
+        previewActiveRef.current = false;
+        onPreview(baseline);
+      }
+      return;
+    }
     previewActiveRef.current = true;
     onPreview(full);
   };

@@ -123,7 +123,7 @@ export function StartScreen({ onOpen, opening, sample }: StartScreenProps) {
         <div className="start-foot">
           <span>⏎ ready when you are</span>
           <span className="sep">·</span>
-          <span>your voice never leaves your machine</span>
+          <a href="https://www.nigelclarke.ca" target="_blank" rel="noopener noreferrer">www.nigelclarke.ca</a>
         </div>
       </div>
 

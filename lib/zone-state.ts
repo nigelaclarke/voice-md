@@ -47,7 +47,7 @@ export interface ZoneStateController {
   reset: () => void;
 }
 
-const GRACE_MS = 250;
+const GRACE_MS = 150;
 
 // Below this hover duration we treat the turn as an accidental brush and
 // discard without committing. Above it, we commit even if no audio activity

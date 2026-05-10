@@ -5,7 +5,8 @@
       "Bash(curl -sL \"https://raw.githubusercontent.com/openai/realtime-voice-component/332285bf41f321353b63ad6d79ac2cab0059a13a/demo/src/demos/shared/session.tsx\")",
       "WebSearch",
       "Bash(ls app/api && ls -la ../realtime-voice-component 2>/dev/null || echo \"no sibling dir\")",
-      "Read(//c/Personal Files/Github/20260509 AI Tinkererer Hackathon/VoiceMD/realtime-voice-component/**)"
+      "Read(//c/Personal Files/Github/20260509 AI Tinkererer Hackathon/VoiceMD/realtime-voice-component/**)",
+      "WebFetch(domain:a2ui.org)"
     ]
   }
 }

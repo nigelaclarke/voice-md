@@ -308,13 +308,14 @@ export function Voice({ editorRef, selectionZoneEnabled = true }: VoiceProps) {
       // tool even on no-op turns ("um", silence, etc.), producing junk
       // edits. Auto lets the model do nothing for those.
       toolChoice: "auto",
-      // Ask for transcripts of the user's audio so the transcript chip + the
-      // [voice:server] event log can show what was actually heard.
-      audio: {
-        input: {
-          transcription: { model: "gpt-4o-transcribe" },
-        },
-      },
+      // TEMP: live input transcription disabled to reduce latency. Re-enable
+      // by uncommenting the block below — that turns the TranscriptChip back on
+      // and restores the [voice:user-said] log entries.
+      // audio: {
+      //   input: {
+      //     transcription: { model: "gpt-4o-transcribe" },
+      //   },
+      // },
       // We DON'T autoConnect; we connect explicitly in the mount effect
       // below so we get clean timing telemetry and a single deterministic
       // connect path (autoConnect would race with the explicit call).
@@ -889,11 +890,15 @@ export function Voice({ editorRef, selectionZoneEnabled = true }: VoiceProps) {
           onZoneRect={onZoneRect}
         />
       )}
-      <TranscriptChip
-        text={transcript}
-        visible={zone.status === "listening" || zone.status === "grace"}
-        anchorRect={selectionZoneScreenRect}
-      />
+      {/* TEMP: TranscriptChip disabled while live input transcription is off
+          (see audio.input.transcription block above). Re-enable together. */}
+      {false && (
+        <TranscriptChip
+          text={transcript}
+          visible={zone.status === "listening" || zone.status === "grace"}
+          anchorRect={selectionZoneScreenRect}
+        />
+      )}
       <ErrorBanner
         error={error}
         onRetry={() => {

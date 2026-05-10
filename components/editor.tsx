@@ -295,18 +295,42 @@ function buildHandle(editor: Editor): EditorHandle {
         if (!node) return null;
         const slice = Slice.maxOpen(node.content);
 
+        // Clamp the requested range to the current doc — defensive in case
+        // upstream state drifted (the bug below corrupted ranges historically;
+        // clamping prevents tr.replaceRange from constructing out-of-bounds
+        // steps even if a stale lt.range slips through).
+        const docSize = view.state.doc.content.size;
+        const rawFrom = range
+          ? Math.min(range.from, range.to)
+          : view.state.selection.from;
+        const rawTo = range
+          ? Math.max(range.from, range.to)
+          : view.state.selection.to;
+        const fromBefore = Math.max(0, Math.min(docSize, rawFrom));
+        const toBefore = Math.max(fromBefore, Math.min(docSize, rawTo));
+
         let tr = view.state.tr;
-        if (range && range.from !== range.to) {
-          tr = tr.replaceRange(range.from, range.to, slice);
+        if (range && fromBefore !== toBefore) {
+          tr = tr.replaceRange(fromBefore, toBefore, slice);
         } else {
           tr = tr.replaceSelection(slice);
         }
-        const insertedFrom = range
-          ? Math.min(range.from, range.to)
-          : view.state.selection.from;
-        // After dispatch, selection.head sits at the end of the insert.
+        const insertedFrom = fromBefore;
+        // CRITICAL: do NOT use view.state.selection.from to derive insertedTo.
+        // tr.replaceRange (unlike tr.replaceSelection) does not relocate the
+        // selection — it just maps it through the change. So selection.from
+        // after dispatch is only the "end of insert" if the caret happened to
+        // be inside the replaced range. For cards-preview / dial-tick re-edits
+        // the caret is usually at the end of the PREVIOUS insert (which equals
+        // toBefore here), but we can't rely on that. Map toBefore through the
+        // transaction's mapping — that authoritatively tells us where the end
+        // of the replaced range landed (i.e. the end of the new inserted
+        // content). If we used the selection-based heuristic, lt.range would
+        // drift on every re-edit until tr.replaceRange constructed a step
+        // with negative positions, exploding inside the history plugin's
+        // invert pass with "Position -N outside of fragment".
+        const insertedTo = tr.mapping.map(toBefore);
         view.dispatch(tr);
-        const insertedTo = view.state.selection.from;
         // Flash the inserted region.
         view.dispatch(
           view.state.tr.setMeta(decorationPluginKey, {
