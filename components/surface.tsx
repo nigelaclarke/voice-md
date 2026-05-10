@@ -140,17 +140,25 @@ export function Surface({
             }
           />
         );
-      case "cards":
+      case "cards": {
+        // The "baseline" is whatever was in the doc when the cards opened —
+        // i.e. the Stage-1 transformSelection output. We snapshot it from
+        // the active surface's lifetime, NOT from the live lastTransform
+        // (which gets mutated on every preview-apply).
+        const baseline = ui.activeSurface?.cardsBaseline ?? null;
         return (
           <AlternativeCards
             spec={spec}
-            onApply={(md) => {
+            baseline={baseline}
+            onPreview={(md) => apply(md)}
+            onCommit={(md) => {
               apply(md);
               dismiss();
             }}
             onDismiss={dismiss}
           />
         );
+      }
       case "chip":
         return (
           <Chip

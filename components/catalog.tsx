@@ -297,14 +297,33 @@ function clamp(n: number, lo: number, hi: number): number {
 
 // ---- AlternativeCards ----------------------------------------------------
 
-interface CardsProps extends BaseProps {
+interface CardsProps {
   spec: CardsSpec;
+  // Apply the variant without committing (used for hover-preview).
+  onPreview: (markdown: string) => void;
+  // Apply and commit (used for click). The surface owner typically dismisses
+  // the cards after this.
+  onCommit: (markdown: string) => void;
+  // Used internally for the click-outside-to-dismiss behaviour.
+  onDismiss: () => void;
+  // Whatever was applied to the doc immediately before the cards opened.
+  // The cards revert to this when the cursor leaves the cards area without
+  // clicking (so the doc isn't left showing a half-considered preview).
+  baseline: string | null;
 }
 
-export function AlternativeCards({ spec, onApply, onDismiss }: CardsProps) {
+export function AlternativeCards({
+  spec,
+  onPreview,
+  onCommit,
+  onDismiss,
+  baseline,
+}: CardsProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
-  // Click outside dismisses.
+  // Click outside dismisses. (We also revert any active preview on the way
+  // out — see the unmount cleanup below.)
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
       if (!containerRef.current) return;
@@ -322,23 +341,80 @@ export function AlternativeCards({ spec, onApply, onDismiss }: CardsProps) {
     };
   }, [onDismiss]);
 
+  // If the cards unmount with a preview still in place (e.g. dismissed via
+  // Esc, idle timeout, or click-outside), revert the doc to the baseline so
+  // we don't strand the user on a variant they were only previewing. We use
+  // refs to keep the cleanup independent of the latest closure.
+  const previewActiveRef = useRef(false);
+  const baselineRef = useRef(baseline);
+  baselineRef.current = baseline;
+  const onPreviewRef = useRef(onPreview);
+  onPreviewRef.current = onPreview;
+  useEffect(() => {
+    return () => {
+      if (previewActiveRef.current && baselineRef.current !== null) {
+        onPreviewRef.current(baselineRef.current);
+      }
+    };
+  }, []);
+
+  const handleEnter = (full: string) => {
+    if (baseline === null || full === baseline) return;
+    previewActiveRef.current = true;
+    onPreview(full);
+  };
+
+  const handleContainerLeave = () => {
+    setHoveredIndex(null);
+    if (previewActiveRef.current && baseline !== null) {
+      previewActiveRef.current = false;
+      onPreview(baseline);
+    }
+  };
+
   return (
-    <div ref={containerRef} className="flex flex-col gap-1.5">
-      {spec.options.map((opt, i) => (
-        <button
-          key={i}
-          type="button"
-          onClick={() => onApply(opt.full)}
-          className="flex flex-col gap-0.5 rounded-md border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-left text-xs transition-colors hover:border-emerald-400/60 hover:bg-emerald-400/5"
-        >
-          <span className="font-medium text-[var(--color-foreground)]">
-            {opt.label}
-          </span>
-          <span className="line-clamp-2 text-[var(--color-muted)]">
-            {opt.preview}
-          </span>
-        </button>
-      ))}
+    <div
+      ref={containerRef}
+      className="flex flex-col gap-1.5"
+      onMouseLeave={handleContainerLeave}
+    >
+      {spec.options.map((opt, i) => {
+        const isHovered = hoveredIndex === i;
+        return (
+          <button
+            key={i}
+            type="button"
+            onMouseEnter={() => {
+              setHoveredIndex(i);
+              handleEnter(opt.full);
+            }}
+            onClick={() => {
+              // Click takes effect — preview is now the committed value, so
+              // we don't want the unmount cleanup to revert it.
+              previewActiveRef.current = false;
+              onCommit(opt.full);
+            }}
+            className={
+              "flex flex-col gap-0.5 rounded-md border px-3 py-2 text-left text-xs transition-colors " +
+              (isHovered
+                ? "border-emerald-400/70 bg-emerald-400/10 shadow-sm"
+                : "border-[var(--color-border)] bg-[var(--color-background)] hover:border-emerald-400/60 hover:bg-emerald-400/5")
+            }
+          >
+            <span className="font-medium text-[var(--color-foreground)]">
+              {opt.label}
+              {isHovered ? (
+                <span className="ml-1 text-[10px] uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                  preview
+                </span>
+              ) : null}
+            </span>
+            <span className="line-clamp-2 text-[var(--color-muted)]">
+              {opt.preview}
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }

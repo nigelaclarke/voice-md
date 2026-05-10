@@ -30,6 +30,12 @@ export interface ActiveSurface {
   // (for cards), or just `null` (for chips).
   axisSelections?: Record<string, string>;
   // For voice control: what the user just said maps to one of these.
+
+  // Snapshot of `lastTransform.currentText` at the moment the surface
+  // opened. Used by AlternativeCards to revert the doc when the user moves
+  // off a hovered card without committing — without this we'd strand the
+  // user on whichever card was last previewed.
+  cardsBaseline?: string | null;
 }
 
 export interface UIStateSnapshot {
@@ -65,6 +71,13 @@ class UIStateStore {
 
   showSurface(surface: Omit<ActiveSurface, "surfaceId"> & { surfaceId?: string }) {
     const surfaceId = surface.surfaceId ?? `surface-${Date.now()}`;
+    // Snapshot the baseline text NOW (before any preview-apply mutates
+    // lastTransform.currentText). This is what AlternativeCards reverts to
+    // when the user previews a card and then leaves without committing.
+    const baseline =
+      surface.cardsBaseline ??
+      this.#snapshot.lastTransform?.currentText ??
+      null;
     this.#snapshot = {
       ...this.#snapshot,
       activeSurface: {
@@ -72,6 +85,7 @@ class UIStateStore {
         spec: surface.spec,
         anchorRect: surface.anchorRect,
         axisSelections: surface.axisSelections,
+        cardsBaseline: baseline,
       },
     };
     this.#armIdleDismissal();
