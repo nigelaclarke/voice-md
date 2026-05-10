@@ -14,6 +14,7 @@ import {
 import { history } from "@milkdown/plugin-history";
 import { Milkdown, MilkdownProvider, useEditor } from "@milkdown/react";
 import { commonmark } from "@milkdown/preset-commonmark";
+import { gfm } from "@milkdown/preset-gfm";
 import { Slice } from "@milkdown/prose/model";
 import { Decoration, DecorationSet } from "@milkdown/prose/view";
 import { Plugin, PluginKey } from "@milkdown/prose/state";
@@ -171,6 +172,10 @@ function MilkdownInner({ onReady }: InnerProps) {
         ctx.set(defaultValueCtx, INITIAL_DOC);
       })
       .use(commonmark)
+      // GFM adds tables, strikethrough, task lists, and autolinks. Without
+      // it, the model's `| col | col |` markdown gets parsed as plain text
+      // by the commonmark-only parser and renders as a paragraph.
+      .use(gfm)
       .use(history),
   );
 

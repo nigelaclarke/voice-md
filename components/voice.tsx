@@ -699,9 +699,14 @@ export function Voice({ editorRef }: VoiceProps) {
     },
     onTurnDiscard: () => {
       // Discard the (silent / no-text) buffer before the model spends tokens.
-      console.info("[voice:zone] onTurnDiscard — buffer.clear, no commit");
-      controller.sendClientEvent({ type: "input_audio_buffer.clear" });
-      // Clear pending highlight.
+      // CRITICAL: pauseCapture (not just buffer.clear) — pauseCapture sets
+      // localTrack.enabled = false so no further audio leaves the browser.
+      // The previous code only sent buffer.clear, which left the mic track
+      // active between turns and continued streaming user speech to OpenAI
+      // even when the user wasn't hovering. pauseCapture drains the buffer
+      // AND mutes the mic without committing or firing response.create.
+      console.info("[voice:zone] onTurnDiscard — pauseCapture (mute mic, drain buffer)");
+      controller.pauseCapture();
       editorRef.current?.setPendingHighlight(null);
       pendingRangeRef.current = null;
       pendingRectRef.current = null;

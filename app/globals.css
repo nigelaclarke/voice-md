@@ -113,12 +113,43 @@ body {
 .voicemd-editor .ProseMirror table {
   border-collapse: collapse;
   margin: 0 0 0.85rem;
+  width: 100%;
+  font-size: 0.95em;
+  table-layout: auto;
 }
 .voicemd-editor .ProseMirror th,
 .voicemd-editor .ProseMirror td {
   border: 1px solid var(--border);
-  padding: 0.4rem 0.6rem;
+  padding: 0.45rem 0.7rem;
   text-align: left;
+  vertical-align: top;
+  min-width: 5rem;
+}
+.voicemd-editor .ProseMirror th {
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+.voicemd-editor .ProseMirror tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--border) 25%, transparent);
+}
+/* GFM strikethrough */
+.voicemd-editor .ProseMirror s,
+.voicemd-editor .ProseMirror del {
+  color: var(--muted);
+}
+/* GFM task lists */
+.voicemd-editor .ProseMirror ul[data-type="taskList"] {
+  padding-left: 0.5rem;
+  list-style: none;
+}
+.voicemd-editor .ProseMirror li[data-type="taskItem"] {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+.voicemd-editor .ProseMirror li[data-type="taskItem"] > input[type="checkbox"] {
+  margin-top: 0.35em;
+  accent-color: var(--accent);
 }
 
 /* About-to-edit highlight (added during a transformSelection turn). */
