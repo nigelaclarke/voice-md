@@ -30,12 +30,11 @@ import {
 } from "react";
 
 import type { EditorHandle, SelectionInfo } from "@/components/editor";
-import { DebugLog } from "@/components/debug-log";
 import { ErrorBanner } from "@/components/error-banner";
 import { TalkZone } from "@/components/talk-zone";
 import { TranscriptChip } from "@/components/transcript-chip";
 import { Surface } from "@/components/surface";
-import { buildContextMessage, SYSTEM_PROMPT } from "@/lib/prompt";
+import { buildContextMessage, buildDocMessage, SYSTEM_PROMPT } from "@/lib/prompt";
 import {
   buildTools,
   type InsertAtCursorArgs,
@@ -239,9 +238,7 @@ export function Voice({ editorRef, selectionZoneEnabled = true }: VoiceProps) {
                     ticks: a.ticks,
                   })),
                 }
-              : spec.type === "cards"
-                ? { optionCount: spec.options.length }
-                : { label: spec.label, followup: spec.followup },
+              : { optionCount: spec.options.length },
         });
         uiStore.showSurface({
           spec,
@@ -493,6 +490,37 @@ export function Voice({ editorRef, selectionZoneEnabled = true }: VoiceProps) {
   // onToolSuccess can reach it.
   controllerRef.current = controller;
 
+  // Track the last full-document text we sent into the conversation. The doc
+  // is sent ONCE at session start (pre-send effect below) and re-sent ONLY
+  // when its text changes — instead of resending it on every hover. For any
+  // non-trivial document this is a large per-turn input-token saving and lets
+  // prompt caching kick in across turns. Reset on disconnect because a new
+  // session means a fresh conversation history with no doc in it.
+  const docSentRef = useRef<string | null>(null);
+
+  const sendDocIfChanged = useCallback(
+    (fullDocument: string) => {
+      if (fullDocument === docSentRef.current) return;
+      console.info(
+        "[voice:doc] sending doc (firstSend=" +
+          (docSentRef.current === null) +
+          ", length=" +
+          fullDocument.length +
+          ")",
+      );
+      controller.sendClientEvent({
+        type: "conversation.item.create",
+        item: {
+          type: "message",
+          role: "system",
+          content: [{ type: "input_text", text: buildDocMessage(fullDocument) }],
+        },
+      });
+      docSentRef.current = fullDocument;
+    },
+    [controller],
+  );
+
   // Connect on mount; destroy on unmount. Time the handshake.
   useEffect(() => {
     const t0 = Date.now();
@@ -611,6 +639,36 @@ export function Voice({ editorRef, selectionZoneEnabled = true }: VoiceProps) {
     return controller.subscribe(tick);
   }, [controller]);
 
+  // Pre-send the document into the conversation as soon as we're connected
+  // AND the editor has mounted, so it sits in the buffer before the first
+  // turn — both warming prompt cache and removing the doc from the critical
+  // path of the first turn. Polls editor.isReady() because the editor is
+  // dynamically imported and there's no readiness callback. The reset on
+  // disconnect is in sendDocIfChanged's containing scope (docSentRef gets
+  // cleared here so that a re-connect re-sends).
+  useEffect(() => {
+    if (!connected) {
+      docSentRef.current = null;
+      return;
+    }
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const trySend = () => {
+      if (cancelled) return;
+      const handle = editorRef.current;
+      if (!handle?.isReady()) {
+        timer = setTimeout(trySend, 100);
+        return;
+      }
+      sendDocIfChanged(handle.getDocument());
+    };
+    trySend();
+    return () => {
+      cancelled = true;
+      if (timer !== null) clearTimeout(timer);
+    };
+  }, [connected, sendDocIfChanged, editorRef]);
+
   // ---- Zone state ----
 
   const zone = useZoneState({
@@ -661,14 +719,17 @@ export function Voice({ editorRef, selectionZoneEnabled = true }: VoiceProps) {
         });
       }
 
-      // 3. Send context system-message into the conversation BEFORE audio.
-      // Read activeSurface live from the store rather than the React snapshot
-      // captured by this closure — React state may lag the store by a frame.
+      // 3. Send doc (only if changed) + per-turn context message into the
+      // conversation BEFORE audio. The doc lives in conversation history from
+      // the pre-send at connect; sendDocIfChanged is a no-op unless the user
+      // has edited the doc since last send. Read activeSurface live from the
+      // store rather than the React snapshot captured by this closure — React
+      // state may lag the store by a frame.
       const fullDocument = handle.getDocument();
+      sendDocIfChanged(fullDocument);
       const selectionText = pendingRangeRef.current?.text ?? null;
       const ctxMsg = buildContextMessage({
         selectionText,
-        fullDocument,
         activeSurface: uiStore.snapshot.activeSurface?.spec ?? null,
       });
       console.info(
@@ -859,9 +920,11 @@ export function Voice({ editorRef, selectionZoneEnabled = true }: VoiceProps) {
           }
           // Send the chip's instruction as a user-typed message into the session,
           // then trigger a response. The model treats it identically to a voice
-          // utterance against the same selection context.
+          // utterance against the same selection context. Doc only crosses the
+          // wire if it has changed since the last send.
           const handle = editorRef.current;
           const fullDocument = handle?.getDocument() ?? "";
+          sendDocIfChanged(fullDocument);
           controller.sendClientEvent({
             type: "conversation.item.create",
             item: {
@@ -872,7 +935,6 @@ export function Voice({ editorRef, selectionZoneEnabled = true }: VoiceProps) {
                   type: "input_text",
                   text: buildContextMessage({
                     selectionText: lt?.currentText ?? null,
-                    fullDocument,
                     activeSurface: null,
                   }),
                 },
@@ -892,7 +954,6 @@ export function Voice({ editorRef, selectionZoneEnabled = true }: VoiceProps) {
         }}
       />
       <GhostCursorOverlay state={ghost.cursorState} />
-      <DebugLog />
     </>
   );
 }

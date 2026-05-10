@@ -54,27 +54,30 @@ export interface EditorHandle {
 
 // Default sample document. Exported so the start screen can offer it as the
 // "open sample document" button content.
-export const SAMPLE_DOC = `# Q3 strategy sync
+export const SAMPLE_DOC = `# Project Spark Doc
 
-> meeting · oct 14 · attended by 6
+> Nigel Clarke · generative-ui · voice gestures · may 9 2026
 
-We met to align on priorities for Q3 and surface blockers before the planning offsite. The conversation moved between revenue concerns and the platform migration timeline, with most of the disagreement concentrated on resourcing.
+VoiceMD started from a simple observation: most editors treat AI as a sidebar, but the model could just as easily speak through the document itself. The features below cover three loose categories — gesture physics, model-driven UI, and the older lineage of voice-as-edit — and most of them got mutated heavily before landing in the build. The list is intentionally a little messy because we wanted the seams visible while we were still deciding what to keep.
 
-## Decisions
+## Features
 
-- Ship the redesigned dashboard before Q3 close
-- Pause the marketing site refresh until after launch
-- Hire two more engineers, both senior, both backend
+- Hover-to-act zones — gesture — invisible regions as a first-class affordance
+- Ambient dictation — voice — mic capture without an explicit button press
+- Selection-as-context edits — intent — the highlighted span is the prompt
+- Model-emitted UI specs — surface — host renders structured output verbatim
+- Direction-as-verb gestures — input — spatial movement carries semantic meaning
 
-## Open questions
+## Tech stack
 
-- Do we extend the contract with Acme through end of year, or renegotiate now?
-- Who owns the migration runbook — Devon or Priya?
-- Should the data export feature be gated to Pro tier or free for all paying users?
-
-## Next steps
-
-By Friday, Devon will draft the resourcing proposal. Priya is going to review the migration timeline against the contract terms. We'll reconvene Monday at 10am to lock the plan.
+| Layer | Tool |
+| --- | --- |
+| Framework | Next.js 16 (App Router) + React 19 |
+| Styling | Tailwind 4 |
+| Editor | Milkdown 7 on ProseMirror |
+| Voice | OpenAI Realtime API over WebRTC |
+| Language | TypeScript 5 |
+| Dev | Claude Code + Claude Design |
 `;
 
 // ---- Decoration plugin: pending + fresh highlights -----------------------

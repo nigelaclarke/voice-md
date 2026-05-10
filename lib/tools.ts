@@ -57,10 +57,12 @@ export const chipSurfaceSpec = z.object({
   followup: z.string().describe("Instruction to execute when the user taps the chip."),
 });
 
+// Chip is temporarily disabled (see also SYSTEM_PROMPT in lib/prompt.ts and
+// the surface.tsx renderInner switch). Re-add `chipSurfaceSpec` to this array
+// to revive it — the spec, type, and Chip component all still exist.
 export const surfaceSpec = z.discriminatedUnion("type", [
   dialSurfaceSpec,
   cardsSurfaceSpec,
-  chipSurfaceSpec,
 ]);
 
 export type SurfaceSpec = z.infer<typeof surfaceSpec>;

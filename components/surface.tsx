@@ -6,7 +6,7 @@
 
 import { useEffect, useRef, useState, type RefObject } from "react";
 
-import { AlternativeCards, Chip, Dial } from "@/components/catalog";
+import { AlternativeCards, Dial } from "@/components/catalog";
 import type { EditorHandle } from "@/components/editor";
 import { uiStore, useUIState } from "@/lib/ui-state";
 
@@ -43,6 +43,27 @@ export function Surface({
         );
       };
     }
+  }, [ui.activeSurface]);
+
+  // Dismiss when the user clicks anywhere outside the surface — clicking the
+  // page background (or the editor body, or the talk zone) means they're done
+  // iterating. Uses mousedown capture so we react before in-DOM handlers, and
+  // skips when wrapperRef isn't mounted yet (brief race during the first
+  // render pass while position is being measured).
+  useEffect(() => {
+    if (!ui.activeSurface) return;
+    const onMouseDown = (e: MouseEvent) => {
+      const wrapper = wrapperRef.current;
+      if (!wrapper) return;
+      const target = e.target as Node | null;
+      if (target && wrapper.contains(target)) return;
+      console.info("[voice:surface] dismiss via outside click");
+      uiStore.dismissSurface();
+    };
+    document.addEventListener("mousedown", onMouseDown, true);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown, true);
+    };
   }, [ui.activeSurface]);
 
   // Position the surface beneath the just-edited range. Re-measure on scroll
@@ -158,17 +179,8 @@ export function Surface({
           />
         );
       }
-      case "chip":
-        return (
-          <Chip
-            spec={spec}
-            onFollowup={(instruction) => {
-              onAnyInteraction?.();
-              onChipFollowup(instruction);
-            }}
-            onDismiss={dismiss}
-          />
-        );
+      // chip is temporarily disabled — removed from surfaceSpec union in
+      // lib/tools.ts. Restore both the union and this case to revive.
       default: {
         const exhaustive: never = spec;
         void exhaustive;
