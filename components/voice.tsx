@@ -16,6 +16,7 @@ import {
   createVoiceControlController,
   GhostCursorOverlay,
   useGhostCursor,
+  type VoiceControlController,
   type VoiceControlError,
 } from "realtime-voice-component";
 import "realtime-voice-component/styles.css";
@@ -267,6 +268,11 @@ export function Voice({ editorRef }: VoiceProps) {
     [],
   );
 
+  // Controller ref so the onToolSuccess callback (which is built inside the
+  // initial createVoiceControlController call, before `controller` is
+  // assigned) can reach the controller for Stage-2 follow-up triggering.
+  const controllerRef = useRef<VoiceControlController | null>(null);
+
   const [controller] = useState(() =>
     createVoiceControlController({
       // Use the ephemeral client-secret flow: the browser negotiates WebRTC
@@ -320,13 +326,12 @@ export function Voice({ editorRef }: VoiceProps) {
       // below so we get clean timing telemetry and a single deterministic
       // connect path (autoConnect would race with the explicit call).
       autoConnect: false,
-      // After a tool executes, automatically fire a second response.create
-      // with the tool result fed back into the conversation. This is what
-      // gives the model a chance to follow `transformSelection` with
-      // `renderUI` — without it, both tool calls would have to live in one
-      // response, which the model frequently skips. The library guards
-      // against runaway loops via #currentResponseIsPostTool.
-      postToolResponse: true,
+      // We do NOT use the library's postToolResponse auto-loop — when given
+      // an extra turn the model tends to emit text ("(no further action)")
+      // instead of calling renderUI. Instead, the adapter manually triggers
+      // a Stage-2 response right after editorial transforms (see below),
+      // with a focused system message that primes the model for renderUI.
+      postToolResponse: false,
       // Surface every realtime event into the console so you can debug what
       // the model is (or isn't) doing in DevTools. Local events are
       // voice.transport.*, voice.capture.*, voice.tool.* — server events are
@@ -402,6 +407,51 @@ export function Voice({ editorRef }: VoiceProps) {
       },
       onToolSuccess: (call) => {
         console.info("[voice:tool] ok ←", call.name, call.output);
+        // Stage 2: after a transformSelection lands, manually prompt the model
+        // for a renderUI follow-up. We set postToolResponse: false because
+        // the library's auto-loop gives the model an unconstrained text turn
+        // that it tends to abuse (replying "(no further action)" in plain
+        // text). Instead, we send a focused system message that tells it
+        // EXACTLY what we want and trigger response.create ourselves.
+        if (call.name === "transformSelection") {
+          const args = call.args as
+            | { primary?: string; intent?: string }
+            | undefined;
+          const intent = args?.intent ?? "";
+          // Skip purely mechanical edits — there's nothing to iterate on.
+          const isMechanical = MECHANICAL_INTENT.test(intent);
+          if (isMechanical) {
+            console.info(
+              "[voice:stage2] skipping (mechanical intent: " + intent + ")",
+            );
+            return;
+          }
+          // Defer slightly so the library finishes sending the function_call
+          // _output for the just-completed tool call before we kick off the
+          // next response.
+          setTimeout(() => {
+            const c = controllerRef.current;
+            if (!c) return;
+            const lt = uiStore.snapshot.lastTransform;
+            const stageTwoCtx = buildStage2Message({
+              intent,
+              originalText: lt?.originalText ?? "",
+              currentText: args?.primary ?? lt?.currentText ?? "",
+            });
+            console.info(
+              "[voice:stage2] triggering renderUI for intent=" + intent,
+            );
+            c.sendClientEvent({
+              type: "conversation.item.create",
+              item: {
+                type: "message",
+                role: "system",
+                content: [{ type: "input_text", text: stageTwoCtx }],
+              },
+            });
+            c.requestResponse();
+          }, 120);
+        }
       },
       onToolError: (call) => {
         console.error("[voice:tool] err ←", call.name, call.error);
@@ -442,6 +492,10 @@ export function Voice({ editorRef }: VoiceProps) {
   // reasons after the first frame. The model was responding from its DEFAULT
   // persona because session.update was failing, and we were blind to the
   // failure.
+
+  // Wire the ref now that the controller exists so the closure inside
+  // onToolSuccess can reach it.
+  controllerRef.current = controller;
 
   // Connect on mount; destroy on unmount. Time the handshake.
   useEffect(() => {
@@ -880,5 +934,29 @@ function rectsEqual(a: DOMRect | null, b: DOMRect | null): boolean {
     a.width === b.width &&
     a.height === b.height
   );
+}
+
+// Intent labels we treat as purely mechanical edits — no Stage-2 affordance
+// makes sense (there's nothing to iterate on). Anything NOT matching is
+// considered editorial and gets a Stage-2 renderUI follow-up prompt.
+const MECHANICAL_INTENT =
+  /\b(bold|italic|underline|strikethrough|format|code-?(?:block|inline)?|link|typo|fix(?:-typo)?|spell|punctu|capital|delete|remove|insert|append|prepend)\b/i;
+
+function buildStage2Message(input: {
+  intent: string;
+  originalText: string;
+  currentText: string;
+}): string {
+  return [
+    `Stage 2 follow-up: you just completed transformSelection with intent="${input.intent}".`,
+    "",
+    "Now call renderUI with an affordance that lets the user continue iterating on this transform. Choose dial / cards / chip per the system prompt's guidance for this intent.",
+    "",
+    "Do NOT emit any text response in this turn. Either call renderUI or do nothing. The user does not see text replies.",
+    "",
+    `Original text (before this transform):\n${JSON.stringify(input.originalText.slice(0, 500))}`,
+    "",
+    `New text (your transformSelection output, this is the midpoint that should sit on the dial's middle tick / live in the cards' midpoint option):\n${JSON.stringify(input.currentText.slice(0, 500))}`,
+  ].join("\n");
 }
 
