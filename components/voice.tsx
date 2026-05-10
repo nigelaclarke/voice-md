@@ -68,12 +68,19 @@ export function Voice({ editorRef }: VoiceProps) {
     const update = () => {
       const handle = editorRef.current;
       if (!handle || !handle.isReady()) {
-        setPendingSelectionRect(null);
-        setSelectionZoneRect(null);
+        // Clear via value-equal setState so we don't re-render when already null.
+        setPendingSelectionRect((prev) => (prev === null ? prev : null));
+        setSelectionZoneRect((prev) => (prev === null ? prev : null));
         return;
       }
       const rect = handle.getSelectionRect();
-      setPendingSelectionRect(rect);
+      // CRITICAL: getBoundingClientRect / view.coordsAtPos return a fresh
+      // DOMRect every call, even when the geometry hasn't changed. Comparing
+      // by reference (React's default setState bailout) sees them as
+      // different and re-renders, which re-fires this listener (it's bound
+      // to scroll/selectionchange), creating an infinite render loop. Gate
+      // on a value comparison instead.
+      setPendingSelectionRect((prev) => (rectsEqual(prev, rect) ? prev : rect));
     };
     document.addEventListener("selectionchange", update);
     window.addEventListener("scroll", update, true);
@@ -94,17 +101,21 @@ export function Voice({ editorRef }: VoiceProps) {
       selectionDelayTimerRef.current = null;
     }
     if (!pendingSelectionRect) {
-      setSelectionZoneRect(null);
+      setSelectionZoneRect((prev) => (prev === null ? prev : null));
       return;
     }
     // If we already had a rect, update immediately (selection moved while
     // the zone was already shown). Otherwise wait for the delay.
     if (selectionZoneRect) {
-      setSelectionZoneRect(pendingSelectionRect);
+      setSelectionZoneRect((prev) =>
+        rectsEqual(prev, pendingSelectionRect) ? prev : pendingSelectionRect,
+      );
       return;
     }
     selectionDelayTimerRef.current = setTimeout(() => {
-      setSelectionZoneRect(pendingSelectionRect);
+      setSelectionZoneRect((prev) =>
+        rectsEqual(prev, pendingSelectionRect) ? prev : pendingSelectionRect,
+      );
     }, SELECTION_ZONE_APPEAR_DELAY);
     return () => {
       if (selectionDelayTimerRef.current !== null) {
@@ -123,8 +134,11 @@ export function Voice({ editorRef }: VoiceProps) {
     selection: DOMRect | null;
   }>({ anchor: null, selection: null });
   const onZoneRect = useCallback((zone: ZoneId, rect: DOMRect | null) => {
+    // Same DOMRect-reference trap as above — the ResizeObserver inside
+    // TalkZone calls this on every layout pass with a fresh DOMRect, so we
+    // MUST compare by value or we'd re-render forever.
     setZoneRects((prev) =>
-      prev[zone] === rect ? prev : { ...prev, [zone]: rect },
+      rectsEqual(prev[zone], rect) ? prev : { ...prev, [zone]: rect },
     );
   }, []);
 
@@ -159,8 +173,9 @@ export function Voice({ editorRef }: VoiceProps) {
         const original = range?.text ?? "";
         const anchorRect = pendingRectRef.current;
         // Apply the replacement against the snapshotted range.
+        let postRange: { from: number; to: number } | null = null;
         try {
-          handle.replaceSelection(
+          postRange = handle.replaceSelection(
             args.primary,
             range ? { from: range.from, to: range.to } : undefined,
           );
@@ -168,8 +183,14 @@ export function Voice({ editorRef }: VoiceProps) {
           console.error("[voice:adapter] replaceSelection threw", err);
           throw err;
         }
-        // Compute the post-edit range so a follow-up Stage 2 dial can replace it.
-        const postRange = computePostEditRange(range, args.primary);
+        if (!postRange) {
+          // Markdown couldn't be parsed; fall back to a naive estimate so the
+          // surface still has something to anchor to.
+          postRange = range
+            ? { from: range.from, to: range.from + args.primary.length }
+            : { from: 0, to: args.primary.length };
+        }
+        console.info("[voice:adapter] applyTransform → postRange", postRange);
         const prevSurface = uiStore.snapshot.activeSurface;
         uiStore.setLastTransform({
           range: postRange,
@@ -201,10 +222,30 @@ export function Voice({ editorRef }: VoiceProps) {
         editorRef.current?.insertAtCursor(args.text);
       },
       showSurface: (spec: SurfaceSpec) => {
+        const last = uiStore.snapshot.lastTransform;
         console.info("[voice:adapter] showSurface", {
           type: spec.type,
+          hasLastTransform: !!last,
+          anchorRect: last?.anchorRect
+            ? {
+                left: Math.round(last.anchorRect.left),
+                top: Math.round(last.anchorRect.top),
+                width: Math.round(last.anchorRect.width),
+                height: Math.round(last.anchorRect.height),
+              }
+            : null,
+          spec:
+            spec.type === "dial"
+              ? {
+                  axes: spec.axes.map((a) => ({
+                    id: a.id,
+                    ticks: a.ticks,
+                  })),
+                }
+              : spec.type === "cards"
+                ? { optionCount: spec.options.length }
+                : { label: spec.label, followup: spec.followup },
         });
-        const last = uiStore.snapshot.lastTransform;
         uiStore.showSurface({
           spec,
           anchorRect: last?.anchorRect ?? null,
@@ -279,6 +320,13 @@ export function Voice({ editorRef }: VoiceProps) {
       // below so we get clean timing telemetry and a single deterministic
       // connect path (autoConnect would race with the explicit call).
       autoConnect: false,
+      // After a tool executes, automatically fire a second response.create
+      // with the tool result fed back into the conversation. This is what
+      // gives the model a chance to follow `transformSelection` with
+      // `renderUI` — without it, both tool calls would have to live in one
+      // response, which the model frequently skips. The library guards
+      // against runaway loops via #currentResponseIsPostTool.
+      postToolResponse: true,
       // Surface every realtime event into the console so you can debug what
       // the model is (or isn't) doing in DevTools. Local events are
       // voice.transport.*, voice.capture.*, voice.tool.* — server events are
@@ -818,22 +866,19 @@ function mapStatus(zone: ZoneStatus, activity: string): ZoneStatus {
   return zone;
 }
 
-// Estimate the post-edit range after replacing `range.from..range.to` with
-// `text`. ProseMirror counts characters (text) and structural transitions
-// (1 per node boundary); for inline replacement within a paragraph this is
-// roughly text length + small constant. Good enough for anchoring the surface
-// and for "shorter / longer" voice navigation against the transformed range.
-function computePostEditRange(
-  range: { from: number; to: number } | null,
-  text: string,
-): { from: number; to: number } {
-  if (!range) {
-    return { from: 0, to: text.length };
-  }
-  // Rough: assume length ~= text.length within a paragraph; for multi-block
-  // inserts the editor's actual selection.head will be more accurate.
-  // The editor's replaceSelection will set selection.head to end-of-insert,
-  // but we don't capture that here. This estimate is fine for surface-anchor
-  // purposes; voice "shorter" still works because we always replace `range`.
-  return { from: range.from, to: range.from + text.length };
+// DOMRect references change every call (getBoundingClientRect /
+// view.coordsAtPos return a fresh object even when geometry hasn't moved).
+// Compare by VALUE everywhere we feed a rect into setState or a useEffect
+// dep, otherwise reference inequality forces a re-render which re-fires
+// the listener that produced the rect — infinite loop.
+function rectsEqual(a: DOMRect | null, b: DOMRect | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.left === b.left &&
+    a.top === b.top &&
+    a.width === b.width &&
+    a.height === b.height
+  );
 }
+

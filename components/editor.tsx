@@ -36,8 +36,14 @@ export interface EditorHandle {
   isReady: () => boolean;
   getSelection: () => SelectionInfo | null;
   getDocument: () => string;
-  replaceSelection: (markdown: string, range?: { from: number; to: number }) => void;
-  insertAtCursor: (markdown: string) => void;
+  // Returns the post-edit range — i.e. the actual ProseMirror positions
+  // covering the inserted markdown. Use this for surface anchoring and for
+  // subsequent edits that target the same region (e.g. dial-tick changes).
+  replaceSelection: (
+    markdown: string,
+    range?: { from: number; to: number },
+  ) => { from: number; to: number } | null;
+  insertAtCursor: (markdown: string) => { from: number; to: number } | null;
   getSelectionRect: () => DOMRect | null;
   getRangeRect: (from: number, to: number) => DOMRect | null;
   setPendingHighlight: (range: { from: number; to: number } | null) => void;
@@ -214,8 +220,8 @@ const VoiceMDEditor = forwardRef<EditorHandle>((_, ref) => {
       getSelection: () => handleRef.current?.getSelection() ?? null,
       getDocument: () => handleRef.current?.getDocument() ?? "",
       replaceSelection: (md, range) =>
-        handleRef.current?.replaceSelection(md, range),
-      insertAtCursor: (md) => handleRef.current?.insertAtCursor(md),
+        handleRef.current?.replaceSelection(md, range) ?? null,
+      insertAtCursor: (md) => handleRef.current?.insertAtCursor(md) ?? null,
       getSelectionRect: () => handleRef.current?.getSelectionRect() ?? null,
       getRangeRect: (from, to) =>
         handleRef.current?.getRangeRect(from, to) ?? null,
@@ -263,11 +269,11 @@ function buildHandle(editor: Editor): EditorHandle {
       });
     },
     replaceSelection(markdown, range) {
-      editor.action((ctx) => {
+      return editor.action((ctx) => {
         const view = ctx.get(editorViewCtx);
         const parser = ctx.get(parserCtx);
         const node = parser(markdown);
-        if (!node) return;
+        if (!node) return null;
         const slice = Slice.maxOpen(node.content);
 
         let tr = view.state.tr;
@@ -296,14 +302,15 @@ function buildHandle(editor: Editor): EditorHandle {
             range: null,
           } satisfies DecorationCommand),
         );
+        return { from: insertedFrom, to: insertedTo };
       });
     },
     insertAtCursor(markdown) {
-      editor.action((ctx) => {
+      return editor.action((ctx) => {
         const view = ctx.get(editorViewCtx);
         const parser = ctx.get(parserCtx);
         const node = parser(markdown);
-        if (!node) return;
+        if (!node) return null;
         const slice = Slice.maxOpen(node.content);
         const { from } = view.state.selection;
         const tr = view.state.tr.replaceRange(from, from, slice);
@@ -315,6 +322,7 @@ function buildHandle(editor: Editor): EditorHandle {
             range: { from, to: insertedTo },
           } satisfies DecorationCommand),
         );
+        return { from, to: insertedTo };
       });
     },
     getSelectionRect() {

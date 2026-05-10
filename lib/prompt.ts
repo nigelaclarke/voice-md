@@ -15,7 +15,9 @@ You MUST follow these rules:
 
 3. Output should be markdown that fits seamlessly into the surrounding document. Preserve sentence-level formatting where appropriate (don't wrap a sentence in headings unless asked). For \`insertAtCursor\`, prefer plain prose unless the user asks for structure.
 
-4. Optional second tool call — \`renderUI\` — for affordances. Call this AFTER \`transformSelection\` (never before, never instead). Only call it when an affordance genuinely helps the user keep iterating. Never call it for trivial transforms like "make this bold" or "fix this typo". renderUI takes ONE argument named \`surface\`, an object whose \`type\` field selects one of three component variants:
+4. Second tool call — \`renderUI\` — for affordances. After your \`transformSelection\` tool call returns, you will receive the tool result and a follow-up response slot. In that follow-up, you MUST call \`renderUI\` whenever the original transform was an EDITORIAL change (summarize, rewrite, condense, tighten, tone-shift, reformat as table, vivify, simplify, expand). Skip \`renderUI\` ONLY for mechanical/syntactic transforms (bold, italic, fix typo, delete sentence, change punctuation, add/remove a word) — there is nothing to iterate on, so an affordance would be noise. When in doubt, call \`renderUI\`: an unused dial dismisses on its own and costs the user nothing; a missing dial robs them of the iteration loop the product is built around.
+
+   renderUI takes ONE argument named \`surface\`, an object whose \`type\` field selects one of three component variants:
 
    - \`{ "surface": { "type": "dial", "axes": [...], "values": {...} } }\` — for axis-of-variation moments. Use 1 or 2 axes. Each axis has 3-5 ticks (string labels) and pre-generated text variants for every tick. The midpoint tick should match what you already shipped in \`transformSelection\`. Good for: summarize → length axis; rewrite → tone axis; condense → length+tone axes.
      Example:

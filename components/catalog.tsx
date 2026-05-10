@@ -34,38 +34,88 @@ export function Dial({ spec, axisSelections, onApply, onAxisChange }: DialProps)
   const middleIndex = (ticks: string[]) => Math.floor(ticks.length / 2);
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex min-w-[22rem] flex-col gap-3 px-1 py-2">
       {spec.axes.map((axis) => {
         const currentTick =
           axisSelections[axis.id] ?? axis.ticks[middleIndex(axis.ticks)];
+        const currentIndex = Math.max(0, axis.ticks.indexOf(currentTick));
+        const ticks = axis.ticks;
+        // Position the dot as a percentage along the track based on the tick
+        // index. With N ticks, tick i sits at i/(N-1) of the track.
+        const dotPct =
+          ticks.length > 1 ? (currentIndex / (ticks.length - 1)) * 100 : 50;
         return (
-          <div key={axis.id} className="flex items-center gap-2 text-xs">
-            <span className="w-14 shrink-0 text-[var(--color-muted)]">
-              {axis.label}
-            </span>
-            <div className="flex flex-1 items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-background)] px-1.5 py-0.5">
-              {axis.ticks.map((tick) => {
-                const isSelected = tick === currentTick;
-                return (
-                  <button
-                    key={tick}
-                    type="button"
-                    onClick={() => {
-                      onAxisChange(axis.id, tick);
-                      const variant = spec.values[axis.id]?.[tick];
-                      if (variant) onApply(variant);
-                    }}
-                    className={
-                      "rounded-full px-2 py-0.5 transition-colors " +
-                      (isSelected
-                        ? "bg-emerald-400/20 font-medium text-[var(--color-foreground)]"
-                        : "text-[var(--color-muted)] hover:bg-[var(--color-accent-soft)]")
-                    }
-                  >
-                    {tick}
-                  </button>
-                );
-              })}
+          <div key={axis.id} className="flex flex-col gap-1.5">
+            <div className="flex items-baseline justify-between text-[11px]">
+              <span className="font-medium uppercase tracking-wider text-[var(--color-muted)]">
+                {axis.label}
+              </span>
+              <span className="font-medium text-[var(--color-foreground)]">
+                {currentTick}
+              </span>
+            </div>
+            <div className="relative h-9">
+              {/* Track */}
+              <div className="absolute left-2 right-2 top-1/2 h-[3px] -translate-y-1/2 rounded-full bg-[var(--color-border)]" />
+              {/* Filled portion up to current */}
+              <div
+                className="absolute left-2 top-1/2 h-[3px] -translate-y-1/2 rounded-full bg-emerald-400/70 transition-all"
+                style={{
+                  width: `calc((100% - 1rem) * ${dotPct / 100})`,
+                }}
+              />
+              {/* Tick buttons */}
+              <div className="absolute inset-x-2 top-0 flex h-full items-center justify-between">
+                {ticks.map((tick) => {
+                  const isSelected = tick === currentTick;
+                  return (
+                    <button
+                      key={tick}
+                      type="button"
+                      title={tick}
+                      onClick={() => {
+                        onAxisChange(axis.id, tick);
+                        const variant = spec.values[axis.id]?.[tick];
+                        if (variant) onApply(variant);
+                      }}
+                      className={
+                        "group relative flex h-9 w-9 items-center justify-center transition-transform hover:scale-110"
+                      }
+                    >
+                      <span
+                        className={
+                          "block rounded-full border-2 transition-all " +
+                          (isSelected
+                            ? "h-4 w-4 border-emerald-500 bg-emerald-400 shadow-md shadow-emerald-400/40"
+                            : "h-2.5 w-2.5 border-[var(--color-border)] bg-[var(--color-background)] group-hover:border-emerald-400/60")
+                        }
+                      />
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            {/* Tick labels under track */}
+            <div className="flex justify-between px-2 text-[10px] text-[var(--color-muted)]">
+              {ticks.map((tick) => (
+                <button
+                  key={tick}
+                  type="button"
+                  onClick={() => {
+                    onAxisChange(axis.id, tick);
+                    const variant = spec.values[axis.id]?.[tick];
+                    if (variant) onApply(variant);
+                  }}
+                  className={
+                    "max-w-[7ch] truncate rounded px-1 py-0.5 transition-colors hover:text-[var(--color-foreground)] " +
+                    (tick === currentTick
+                      ? "font-medium text-[var(--color-foreground)]"
+                      : "")
+                  }
+                >
+                  {tick}
+                </button>
+              ))}
             </div>
           </div>
         );

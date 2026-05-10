@@ -9,6 +9,7 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { AlternativeCards, Chip, Dial } from "@/components/catalog";
 import type { EditorHandle } from "@/components/editor";
 import { uiStore, useUIState } from "@/lib/ui-state";
+import type { SurfaceSpec } from "@/lib/tools";
 
 interface SurfaceProps {
   editorRef: RefObject<EditorHandle | null>;
@@ -27,6 +28,24 @@ export function Surface({
     null,
   );
 
+  // Log surface lifecycle so we can confirm renderUI tool calls actually
+  // mount the affordance (and at what position).
+  useEffect(() => {
+    if (ui.activeSurface) {
+      console.info(
+        "[voice:surface] mounted",
+        ui.activeSurface.surfaceId,
+        "type=" + ui.activeSurface.spec.type,
+      );
+      return () => {
+        console.info(
+          "[voice:surface] unmounted",
+          ui.activeSurface?.surfaceId ?? "?",
+        );
+      };
+    }
+  }, [ui.activeSurface]);
+
   // Position the surface beneath the just-edited range. Re-measure on scroll
   // and on doc changes so it tracks if the user keeps editing.
   useEffect(() => {
@@ -38,13 +57,19 @@ export function Surface({
       const handle = editorRef.current;
       const lt = uiStore.snapshot.lastTransform;
       let rect: DOMRect | null = null;
+      let source = "fallback-default";
       if (handle && lt) {
         rect = handle.getRangeRect(lt.range.from, lt.range.to);
+        if (rect) source = "lastTransform.range";
       }
       if (!rect) {
         rect = ui.activeSurface?.anchorRect ?? null;
+        if (rect) source = "anchorRect";
       }
       if (!rect) {
+        console.warn(
+          "[voice:surface] no anchor rect — using viewport fallback (80, 80)",
+        );
         setPosition({ top: 80, left: 80 });
         return;
       }
@@ -55,6 +80,10 @@ export function Surface({
         Math.min(window.innerWidth - surfaceWidth - 16, rect.left),
       );
       const top = rect.bottom + padding;
+      console.info("[voice:surface] positioned via " + source, {
+        top: Math.round(top),
+        left: Math.round(left),
+      });
       setPosition({ top, left });
     };
     measure();
@@ -75,17 +104,27 @@ export function Surface({
     const handle = editorRef.current;
     const lt = uiStore.snapshot.lastTransform;
     if (!handle || !lt) return;
-    handle.replaceSelection(markdown, lt.range);
-    // Update last-transform in place so the next variant replaces THIS edit,
-    // not the original selection. Length estimate is good enough for anchor.
+    console.info("[voice:surface] apply", {
+      markdownLength: markdown.length,
+      againstRange: lt.range,
+    });
+    const postRange = handle.replaceSelection(markdown, lt.range);
+    // Use the actual post-edit range from the editor so subsequent variant
+    // swaps target the right region (not an estimated length).
     uiStore.setLastTransform({
       ...lt,
-      range: { from: lt.range.from, to: lt.range.from + markdown.length },
+      range: postRange ?? {
+        from: lt.range.from,
+        to: lt.range.from + markdown.length,
+      },
       currentText: markdown,
     });
   };
 
-  const dismiss = () => uiStore.dismissSurface();
+  const dismiss = () => {
+    console.info("[voice:surface] dismiss requested");
+    uiStore.dismissSurface();
+  };
 
   const renderInner = () => {
     switch (spec.type) {

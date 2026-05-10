@@ -36,6 +36,18 @@ export function TalkZone(props: TalkZoneProps) {
   const zoneId: ZoneId = props.variant === "anchor" ? "anchor" : "selection";
 
   // Report own DOMRect for transcript chip anchoring.
+  // CRITICAL: anchorRect is a DOMRect that changes reference every parent
+  // render even when the geometry is identical — using it directly as a dep
+  // would re-run this effect every render, calling onZoneRect, which calls
+  // setZoneRects in voice.tsx, which causes another render. We derive a
+  // string key from the rect's coords so the dep only changes when the rect
+  // actually moves.
+  const anchorKey =
+    props.variant === "selection" && props.anchorRect
+      ? `${props.anchorRect.left},${props.anchorRect.top},${props.anchorRect.width},${props.anchorRect.height}`
+      : props.variant === "selection"
+        ? "no-rect"
+        : "anchor";
   useEffect(() => {
     if (!props.onZoneRect) return;
     const el = ref.current;
@@ -54,14 +66,8 @@ export function TalkZone(props: TalkZoneProps) {
       window.removeEventListener("scroll", update, true);
       window.removeEventListener("resize", update);
     };
-    // anchorRect change for selection variant triggers re-report via the
-    // dependency below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    zoneId,
-    props.variant,
-    props.variant === "selection" ? props.anchorRect : null,
-  ]);
+  }, [zoneId, props.variant, anchorKey]);
 
   const isActive = props.isHovered;
   const isListening = props.status === "listening" || props.status === "grace";
